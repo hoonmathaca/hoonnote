@@ -16,6 +16,7 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * 페이지(노트 배경 + PDF/이미지 + 판서 + 포스트잇)를 캔버스에 그리는 공통 로직.
@@ -24,7 +25,9 @@ import kotlin.math.sin
 object PagePainter {
 
     const val GRID_STEP = 40f
-    private const val HIGHLIGHTER_ALPHA = 100
+
+    /** 형광펜은 같은 색을 옅게 덮어쓴다(약 43%). */
+    const val HIGHLIGHTER_ALPHA = 110
     private const val GUIDE_STEP = 96f
 
     fun isShape(kind: ElementKind): Boolean =
@@ -66,8 +69,57 @@ object PagePainter {
     }
 
     /**
+     * 필압으로 굵기가 변하는 선은 획 폭이 점마다 달라지므로,
+     * 양쪽 외곽선을 이어 붙인 하나의 채움 경로(리본)로 만든다.
+     */
+    fun buildRibbon(el: DrawElement, path: Path) {
+        path.reset()
+        val pts = el.points
+        val n = pts.size
+        if (n == 0) return
+        if (n == 1) {
+            path.addCircle(pts[0].x, pts[0].y, max(el.widthAt(0) / 2f, 0.5f), Path.Direction.CW)
+            return
+        }
+
+        val leftX = FloatArray(n)
+        val leftY = FloatArray(n)
+        val rightX = FloatArray(n)
+        val rightY = FloatArray(n)
+
+        for (i in 0 until n) {
+            val prev = pts[if (i > 0) i - 1 else i]
+            val next = pts[if (i < n - 1) i + 1 else i]
+            var dx = next.x - prev.x
+            var dy = next.y - prev.y
+            val len = sqrt(dx * dx + dy * dy)
+            if (len < 0.0001f) {
+                dx = 1f
+                dy = 0f
+            }
+            val nx = -dy / max(len, 0.0001f)
+            val ny = dx / max(len, 0.0001f)
+            val half = max(el.widthAt(i) / 2f, 0.3f)
+            leftX[i] = pts[i].x + nx * half
+            leftY[i] = pts[i].y + ny * half
+            rightX[i] = pts[i].x - nx * half
+            rightY[i] = pts[i].y - ny * half
+        }
+
+        path.moveTo(leftX[0], leftY[0])
+        for (i in 1 until n) path.lineTo(leftX[i], leftY[i])
+        for (i in n - 1 downTo 0) path.lineTo(rightX[i], rightY[i])
+        path.close()
+        // 시작·끝을 둥글게 마감한다.
+        path.addCircle(pts[0].x, pts[0].y, max(el.widthAt(0) / 2f, 0.3f), Path.Direction.CW)
+        path.addCircle(
+            pts[n - 1].x, pts[n - 1].y, max(el.widthAt(n - 1) / 2f, 0.3f), Path.Direction.CW
+        )
+    }
+
+    /**
      * 노트 전체를 그린다.
-     * @param background PDF/이미지 배경. page.contentRect 안에만 그려진다.
+     * @param background PDF/이미지 배경. page.contentRect 안에만, page.rotation 만큼 돌려 그려진다.
      */
     fun drawPage(canvas: Canvas, page: Page, background: Bitmap?, paint: Paint) {
         // 노트 바탕 (PDF가 있어도 여백은 노트 배경색으로 남는다)
@@ -81,17 +133,48 @@ object PagePainter {
 
         val content = RectF(page.contentRect)
         if (background != null && !content.isEmpty) {
-            paint.reset()
-            paint.isAntiAlias = true
-            paint.isFilterBitmap = true
-            paint.color = Color.WHITE
-            canvas.drawBitmap(background, null, content, paint)
+            drawContent(canvas, page, background, content, paint)
         }
 
         if (!content.isEmpty) drawMarginGuides(canvas, page, content, paint)
 
         for (el in page.elements) drawElement(canvas, el, paint)
         drawNotes(canvas, page.notes, paint)
+    }
+
+    /** PDF/이미지를 회전까지 반영해 contentRect 안에 그린다. */
+    private fun drawContent(
+        canvas: Canvas,
+        page: Page,
+        background: Bitmap,
+        content: RectF,
+        paint: Paint
+    ) {
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.isFilterBitmap = true
+        paint.color = Color.WHITE
+
+        val rotation = page.rotation % 360
+        if (rotation == 0) {
+            canvas.drawBitmap(background, null, content, paint)
+            return
+        }
+        val dst = RectF(content)
+        if (rotation % 180 == 90) {
+            val w = content.height()
+            val h = content.width()
+            dst.set(
+                content.centerX() - w / 2f,
+                content.centerY() - h / 2f,
+                content.centerX() + w / 2f,
+                content.centerY() + h / 2f
+            )
+        }
+        canvas.save()
+        canvas.rotate(rotation.toFloat(), content.centerX(), content.centerY())
+        canvas.drawBitmap(background, null, dst, paint)
+        canvas.restore()
     }
 
     private fun drawGrid(canvas: Canvas, page: Page, paint: Paint) {
@@ -147,6 +230,10 @@ object PagePainter {
 
     fun drawElement(canvas: Canvas, el: DrawElement, paint: Paint) {
         if (el.points.isEmpty()) return
+        if (el.hasPressure) {
+            drawPressureElement(canvas, el, paint)
+            return
+        }
         val path = el.cachedPath ?: Path().also {
             buildPath(el, it)
             el.cachedPath = it
@@ -165,6 +252,20 @@ object PagePainter {
         if (el.kind == ElementKind.ARROW) {
             drawArrowHead(canvas, el, paint)
         }
+    }
+
+    private fun drawPressureElement(canvas: Canvas, el: DrawElement, paint: Paint) {
+        val path = el.cachedPath ?: Path().also {
+            buildRibbon(el, it)
+            el.cachedPath = it
+        }
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.strokeJoin = Paint.Join.ROUND
+        paint.color = el.color
+        if (el.kind == ElementKind.HIGHLIGHTER) paint.alpha = HIGHLIGHTER_ALPHA
+        canvas.drawPath(path, paint)
     }
 
     private fun drawArrowHead(canvas: Canvas, el: DrawElement, paint: Paint) {

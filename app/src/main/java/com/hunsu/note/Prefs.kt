@@ -3,6 +3,7 @@ package com.hunsu.note
 import android.graphics.Color
 import com.hunsu.note.model.NoteAlign
 import com.hunsu.note.model.NoteLayout
+import com.hunsu.note.model.StrokeWidths
 
 /**
  * 사용자 설정 저장소. 모든 값은 SharedPreferences 에 즉시 반영된다.
@@ -15,13 +16,23 @@ object Prefs {
     /** 손가락도 판서 허용 (스타일러스 없는 기기에서 테스트용) */
     const val PALM_FINGER = 1
 
+    /** 녹화 영역: 노트(페이지) 영역만 */
+    const val REC_AREA_PAGE = 0
+
+    /** 녹화 영역: 화면 전체 */
+    const val REC_AREA_FULL = 1
+
     private const val KEY_PEN_WIDTH = "pen_width"
     private const val KEY_PEN_COLOR = "pen_color"
+    private const val KEY_HL_WIDTH = "highlighter_width"
+    private const val KEY_HL_COLOR = "highlighter_color"
+    private const val KEY_PRESSURE = "pressure_enabled"
     private const val KEY_PALM_MODE = "palm_mode"
     private const val KEY_REC_HEIGHT = "rec_height"
     private const val KEY_REC_FPS = "rec_fps"
     private const val KEY_REC_BITRATE = "rec_bitrate"
     private const val KEY_REC_MIC = "rec_mic"
+    private const val KEY_REC_AREA = "rec_area"
     private const val KEY_START_FULLSCREEN = "start_fullscreen"
     private const val KEY_AUTO_HIDE_TOOLBAR = "auto_hide_toolbar"
     private const val KEY_NOTE_LAYOUT = "note_layout"
@@ -31,15 +42,36 @@ object Prefs {
     /** 노트 여백 기본값 (노트 크기의 2%) */
     private const val DEFAULT_NOTE_MARGIN = 0.02f
 
+    /** 형광펜 기본색 (노랑) */
+    const val DEFAULT_HIGHLIGHTER_COLOR = 0xFFFFEB3B.toInt()
+
     private fun p() = HunsuApp.prefs()
 
     var penWidth: Float
-        get() = p().getFloat(KEY_PEN_WIDTH, 6f).coerceIn(1f, 40f)
-        set(value) = p().edit().putFloat(KEY_PEN_WIDTH, value).apply()
+        get() = p().getFloat(KEY_PEN_WIDTH, 6f)
+            .coerceIn(StrokeWidths.MIN_WIDTH, StrokeWidths.MAX_WIDTH)
+        set(value) = p().edit().putFloat(
+            KEY_PEN_WIDTH, value.coerceIn(StrokeWidths.MIN_WIDTH, StrokeWidths.MAX_WIDTH)
+        ).apply()
 
     var penColor: Int
         get() = p().getInt(KEY_PEN_COLOR, 0xFF111111.toInt())
         set(value) = p().edit().putInt(KEY_PEN_COLOR, value).apply()
+
+    /** 형광펜 굵기 (펜과 따로 기억한다) */
+    var highlighterWidth: Float
+        get() = p().getFloat(KEY_HL_WIDTH, 20f).coerceIn(4f, 60f)
+        set(value) = p().edit().putFloat(KEY_HL_WIDTH, value.coerceIn(4f, 60f)).apply()
+
+    /** 형광펜 색 (펜과 따로 기억한다) */
+    var highlighterColor: Int
+        get() = p().getInt(KEY_HL_COLOR, DEFAULT_HIGHLIGHTER_COLOR)
+        set(value) = p().edit().putInt(KEY_HL_COLOR, value).apply()
+
+    /** 필압 감지 (스타일러스 압력으로 선 굵기 변화) */
+    var pressureEnabled: Boolean
+        get() = p().getBoolean(KEY_PRESSURE, true)
+        set(value) = p().edit().putBoolean(KEY_PRESSURE, value).apply()
 
     var palmMode: Int
         get() = p().getInt(KEY_PALM_MODE, PALM_FINGER)
@@ -61,12 +93,18 @@ object Prefs {
         get() = p().getBoolean(KEY_REC_MIC, true)
         set(value) = p().edit().putBoolean(KEY_REC_MIC, value).apply()
 
+    /** 녹화 영역 (REC_AREA_PAGE / REC_AREA_FULL) */
+    var recordArea: Int
+        get() = p().getInt(KEY_REC_AREA, REC_AREA_PAGE)
+        set(value) = p().edit().putInt(KEY_REC_AREA, value).apply()
+
     var startFullscreen: Boolean
         get() = p().getBoolean(KEY_START_FULLSCREEN, true)
         set(value) = p().edit().putBoolean(KEY_START_FULLSCREEN, value).apply()
 
+    /** 녹화 시작 시 도구 막대 자동 숨김 (기본은 꺼짐 — 녹화해도 화면이 바뀌지 않는다) */
     var autoHideToolbar: Boolean
-        get() = p().getBoolean(KEY_AUTO_HIDE_TOOLBAR, true)
+        get() = p().getBoolean(KEY_AUTO_HIDE_TOOLBAR, false)
         set(value) = p().edit().putBoolean(KEY_AUTO_HIDE_TOOLBAR, value).apply()
 
     /** 노트 캔버스 크기 (NoteLayout 순서) */

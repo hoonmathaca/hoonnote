@@ -11,8 +11,8 @@ android {
         applicationId "com.hunsu.note"
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "2.0"
+        versionCode 3
+        versionName "3.0"
         vectorDrawables {
             useSupportLibrary true
         }
@@ -43,6 +43,20 @@ android {
         buildConfig true
     }
 
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
+}
+
+// Robolectric 이 android-all jar 를 받아 둘 홈 디렉터리(선택). CI 에서는 기본값을 쓴다.
+tasks.withType(Test).configureEach {
+    def roboHome = System.getenv('ROBOLECTRIC_HOME')
+    if (roboHome != null) {
+        systemProperty 'user.home', roboHome
+    }
 }
 
 dependencies {
@@ -50,4 +64,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.activity:activity-ktx:1.9.2'
     implementation 'com.google.android.material:material:1.12.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.12.2'
+    testImplementation 'androidx.test:core:1.5.0'
 }

@@ -11,6 +11,7 @@ import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -20,7 +21,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.text.Editable
+import android.text.InputType
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
@@ -28,12 +31,17 @@ import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -46,11 +54,14 @@ import com.hunsu.note.model.Lecture
 import com.hunsu.note.model.NoteLayout
 import com.hunsu.note.model.Page
 import com.hunsu.note.model.StickyNote
+import com.hunsu.note.model.StrokeWidths
 import com.hunsu.note.model.Tool
 import com.hunsu.note.rec.RecSettings
 import com.hunsu.note.rec.ScreenRecordService
+import com.hunsu.note.util.PageRange
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.min
 
 /**
  * 훈노트 메인 화면 (아이캔노트형 3영역 레이아웃).
@@ -72,10 +83,13 @@ class MainActivity : AppCompatActivity() {
 
     private var penColor = Prefs.defaultPenColor
     private var penWidth = Prefs.defaultPenWidth
+    private var highlighterColor = Prefs.DEFAULT_HIGHLIGHTER_COLOR
+    private var highlighterWidth = 20f
     private var penTouchedByUser = false
     private var immersive = false
     private var pendingMic = true
     private var toolButtons: List<Pair<ImageButton, Tool>> = emptyList()
+    private var widthChips: List<TextView> = emptyList()
 
     private var topBarVisible = true
     private var thumbPanelVisible = true
@@ -106,17 +120,14 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_BG = 32
         private const val MENU_FULLSCREEN = 33
         private const val MENU_HIDE_BARS = 34
+        private const val MENU_PDF_ROTATE = 35
 
         private const val MENU_REC_TOGGLE = 41
         private const val MENU_REC_SETTINGS = 42
 
         private const val THUMB_WIDTH = 200
 
-        private const val WIDTH_THIN = 3f
-        private const val WIDTH_NORMAL = 7f
-        private const val WIDTH_THICK = 14f
-
-        private val PALETTE = intArrayOf(
+        private val PEN_PALETTE = intArrayOf(
             0xFF111111.toInt(),
             0xFF1E88E5.toInt(),
             0xFFE53935.toInt(),
@@ -127,6 +138,16 @@ class MainActivity : AppCompatActivity() {
             0xFFFFFFFF.toInt()
         )
 
+        /** 형광펜 색: 노랑·연두·분홍·하늘 + 주황·보라 */
+        private val HIGHLIGHTER_PALETTE = intArrayOf(
+            0xFFFFEB3B.toInt(),
+            0xFF76FF03.toInt(),
+            0xFFFF4081.toInt(),
+            0xFF40C4FF.toInt(),
+            0xFFFFAB40.toInt(),
+            0xFFB388FF.toInt()
+        )
+
         private val BACKGROUNDS = arrayOf(
             BackgroundStyle.WHITE,
             BackgroundStyle.CREAM,
@@ -134,6 +155,8 @@ class MainActivity : AppCompatActivity() {
             BackgroundStyle.NAVY,
             BackgroundStyle.GRID
         )
+
+        private val ROTATIONS = intArrayOf(0, 90, 180, 270)
     }
 
     // ---------------------------------------------------------------- 생명주기
@@ -143,17 +166,35 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 상태바·내비바를 완전히 숨기기 위해 창을 시스템 바 뒤까지 확장한다.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(
+                bars.left,
+                bars.top,
+                bars.right,
+                maxOf(bars.bottom, ime.bottom)
+            )
+            WindowInsetsCompat.CONSUMED
+        }
+
         penColor = Prefs.penColor
         penWidth = Prefs.penWidth
+        highlighterColor = Prefs.highlighterColor
+        highlighterWidth = Prefs.highlighterWidth
         lastAlign = Prefs.noteAlign
         lastMargin = Prefs.noteMargin
 
         setupCanvas()
         setupMenus()
         setupToolRail()
-        setupColorPalette()
         setupBars()
+        refreshPalette()
         refreshWidthButtons()
+
+        onBackPressedDispatcher.addCallback(this) { confirmExit() }
 
         startBlankLecture(BackgroundStyle.WHITE)
 
@@ -184,15 +225,24 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         binding.canvasView.fingerDrawingAllowed = Prefs.palmMode == Prefs.PALM_FINGER
+        binding.canvasView.pressureEnabled = Prefs.pressureEnabled
         if (!penTouchedByUser) {
             penColor = Prefs.penColor
             penWidth = Prefs.penWidth
-            binding.canvasView.penColor = penColor
-            binding.canvasView.penWidth = penWidth
-            refreshColorDots()
+            highlighterColor = Prefs.highlighterColor
+            highlighterWidth = Prefs.highlighterWidth
+            applyCurrentToolStyle()
+            refreshPalette()
             refreshWidthButtons()
         }
         applyNoteSettings()
+        applyImmersive()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // 다이얼로그나 알림 뒤로 상태바가 다시 나타나는 경우를 매번 되돌린다.
+        if (hasFocus) applyImmersive()
     }
 
     override fun onDestroy() {
@@ -208,6 +258,7 @@ class MainActivity : AppCompatActivity() {
         binding.canvasView.apply {
             penColor = this@MainActivity.penColor
             penWidth = this@MainActivity.penWidth
+            pressureEnabled = Prefs.pressureEnabled
             fingerDrawingAllowed = Prefs.palmMode == Prefs.PALM_FINGER
             onPageEdited = { markCurrentPageDirty() }
             onTransformChanged = { layoutNotes() }
@@ -236,7 +287,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupToolRail() {
-        toolButtons = listOf(
+        val buttons = arrayListOf(
             binding.btnPen to Tool.PEN,
             binding.btnHighlighter to Tool.HIGHLIGHTER,
             binding.btnLine to Tool.LINE,
@@ -244,9 +295,11 @@ class MainActivity : AppCompatActivity() {
             binding.btnRect to Tool.RECT,
             binding.btnOval to Tool.OVAL,
             binding.btnEraser to Tool.ERASER,
+            binding.btnEraserPartial to Tool.ERASER_PARTIAL,
             binding.btnHand to Tool.HAND
         )
-        for ((button, tool) in toolButtons) {
+        toolButtons = buttons
+        for ((button, tool) in buttons) {
             button.setOnClickListener { selectTool(tool) }
         }
         binding.btnNote.setOnClickListener { addStickyNote() }
@@ -257,10 +310,6 @@ class MainActivity : AppCompatActivity() {
             if (binding.canvasView.redo()) markCurrentPageDirty()
         }
 
-        binding.btnWidthThin.setOnClickListener { setPenWidth(WIDTH_THIN) }
-        binding.btnWidthNormal.setOnClickListener { setPenWidth(WIDTH_NORMAL) }
-        binding.btnWidthThick.setOnClickListener { setPenWidth(WIDTH_THICK) }
-
         binding.btnRecord.setOnClickListener { onRecordClicked() }
         binding.btnPrevPage.setOnClickListener { goToPage(lecture.index - 1) }
         binding.btnNextPage.setOnClickListener { goToPage(lecture.index + 1) }
@@ -268,14 +317,33 @@ class MainActivity : AppCompatActivity() {
         selectTool(Tool.PEN)
     }
 
-    private fun setupColorPalette() {
+    // ---------------------------------------------------------------- 색·굵기
+
+    private fun currentTool(): Tool = binding.canvasView.tool
+
+    private fun isHighlighterActive(): Boolean = currentTool() == Tool.HIGHLIGHTER
+
+    private fun currentStrokeColor(): Int =
+        if (isHighlighterActive()) highlighterColor else penColor
+
+    private fun currentStrokeWidth(): Float =
+        if (isHighlighterActive()) highlighterWidth else penWidth
+
+    /** 도구에 맞는 색을 캔버스에 적용한다. */
+    private fun applyCurrentToolStyle() {
+        binding.canvasView.penColor = currentStrokeColor()
+        binding.canvasView.penWidth = currentStrokeWidth()
+    }
+
+    private fun refreshPalette() {
         val grid: GridLayout = binding.colorGrid
         grid.removeAllViews()
         val density = resources.displayMetrics.density
         val size = (17 * density).toInt()
         val margin = (2 * density).toInt()
+        val palette = if (isHighlighterActive()) HIGHLIGHTER_PALETTE else PEN_PALETTE
 
-        for (color in PALETTE) {
+        for (color in palette) {
             val dot = View(this)
             val lp = GridLayout.LayoutParams()
             lp.width = size
@@ -283,7 +351,9 @@ class MainActivity : AppCompatActivity() {
             lp.setMargins(margin, margin, margin, margin)
             dot.layoutParams = lp
             dot.tag = color
-            dot.contentDescription = getString(R.string.pen_default_color)
+            dot.contentDescription = getString(
+                if (isHighlighterActive()) R.string.tool_highlighter else R.string.pen_default_color
+            )
             dot.setOnClickListener { selectPenColor(color) }
             grid.addView(dot)
         }
@@ -293,10 +363,11 @@ class MainActivity : AppCompatActivity() {
     private fun refreshColorDots() {
         val grid = binding.colorGrid
         val density = resources.displayMetrics.density
+        val selectedColor = currentStrokeColor()
         for (i in 0 until grid.childCount) {
             val dot = grid.getChildAt(i)
             val color = dot.tag as? Int ?: continue
-            val selected = color == penColor
+            val selected = color == selectedColor
             dot.background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(color)
@@ -310,43 +381,82 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectPenColor(color: Int) {
-        penColor = color
-        penTouchedByUser = true
+        if (isHighlighterActive()) {
+            highlighterColor = color
+            Prefs.highlighterColor = color
+        } else {
+            penColor = color
+            penTouchedByUser = true
+            Prefs.penColor = color
+        }
         binding.canvasView.penColor = color
-        Prefs.penColor = color
         refreshColorDots()
-        val current = binding.canvasView.tool
-        if (current == Tool.ERASER || current == Tool.HAND) selectTool(Tool.PEN)
+        val current = currentTool()
+        if (current == Tool.ERASER || current == Tool.ERASER_PARTIAL || current == Tool.HAND) {
+            selectTool(Tool.PEN)
+        }
     }
 
-    private fun setPenWidth(width: Float) {
-        penWidth = width
-        penTouchedByUser = true
+    private fun setStrokeWidth(width: Float) {
+        if (isHighlighterActive()) {
+            highlighterWidth = width
+            Prefs.highlighterWidth = width
+        } else {
+            penWidth = width
+            penTouchedByUser = true
+            Prefs.penWidth = width
+        }
         binding.canvasView.penWidth = width
-        Prefs.penWidth = width
         binding.canvasView.invalidate()
         refreshWidthButtons()
     }
 
+    /** 굵기 단계 버튼을 지금 도구의 단계에 맞춰 다시 만든다. */
     private fun refreshWidthButtons() {
-        val values = floatArrayOf(WIDTH_THIN, WIDTH_NORMAL, WIDTH_THICK)
-        val buttons = arrayOf(binding.btnWidthThin, binding.btnWidthNormal, binding.btnWidthThick)
-        var nearest = 0
-        var best = Float.MAX_VALUE
-        for (i in values.indices) {
-            val diff = kotlin.math.abs(values[i] - penWidth)
-            if (diff < best) {
-                best = diff
-                nearest = i
+        val grid = binding.widthGrid ?: return
+        val values = StrokeWidths.of(currentTool())
+        val active = currentStrokeWidth()
+        val density = resources.displayMetrics.density
+
+        if (widthChips.size != values.size) {
+            grid.removeAllViews()
+            val list = ArrayList<TextView>()
+            for (value in values) {
+                val chip = TextView(this)
+                chip.text = StrokeWidths.label(value)
+                chip.textSize = 9.5f
+                chip.gravity = Gravity.CENTER
+                chip.typeface = Typeface.DEFAULT_BOLD
+                chip.isClickable = true
+                val lp = GridLayout.LayoutParams()
+                lp.width = (28 * density).toInt()
+                lp.height = (22 * density).toInt()
+                lp.setMargins((1 * density).toInt(), (1 * density).toInt(), (1 * density).toInt(), (1 * density).toInt())
+                chip.layoutParams = lp
+                chip.tag = value
+                chip.setOnClickListener { v -> setStrokeWidth(v.tag as Float) }
+                grid.addView(chip)
+                list.add(chip)
+            }
+            widthChips = list
+        } else {
+            for ((i, chip) in widthChips.withIndex()) {
+                chip.text = StrokeWidths.label(values[i])
+                chip.tag = values[i]
             }
         }
+
+        val selected = StrokeWidths.nearestIndex(values, active)
+        val exact = values[selected] == active
         val on = ContextCompat.getColor(this, R.color.tool_text_selected)
         val off = ContextCompat.getColor(this, R.color.tool_text)
-        for (i in buttons.indices) {
-            val selected = i == nearest && penWidth == values[i]
-            buttons[i].imageTintList = ColorStateList.valueOf(if (selected) on else off)
-            buttons[i].backgroundTintList =
-                ColorStateList.valueOf(if (selected) 0x33FFFFFF else 0x00000000)
+        for ((i, chip) in widthChips.withIndex()) {
+            val isSelected = exact && i == selected
+            chip.setTextColor(if (isSelected) on else off)
+            chip.background = GradientDrawable().apply {
+                cornerRadius = 5 * density
+                setColor(if (isSelected) 0x33FFFFFF else 0x00000000)
+            }
         }
     }
 
@@ -360,6 +470,9 @@ class MainActivity : AppCompatActivity() {
             button.backgroundTintList =
                 ColorStateList.valueOf(if (selected) 0x33FFFFFF else 0x00000000)
         }
+        applyCurrentToolStyle()
+        refreshPalette()
+        refreshWidthButtons()
     }
 
     // ---------------------------------------------------------------- 상단 메뉴
@@ -375,7 +488,7 @@ class MainActivity : AppCompatActivity() {
                 MENU_NEW_LECTURE -> confirmNewLecture()
                 MENU_OPEN_PDF -> pdfPicker.launch(arrayOf("application/pdf"))
                 MENU_OPEN_IMAGE -> imagePicker.launch(arrayOf("image/*"))
-                MENU_QUIT -> finish()
+                MENU_QUIT -> confirmExit()
             }
             true
         }
@@ -414,11 +527,12 @@ class MainActivity : AppCompatActivity() {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, MENU_FIT, 0, getString(R.string.menu_fit))
         popup.menu.add(0, MENU_BG, 1, getString(R.string.menu_bg))
+        popup.menu.add(0, MENU_PDF_ROTATE, 2, getString(R.string.menu_pdf_rotate))
         popup.menu.add(
-            0, MENU_FULLSCREEN, 2,
+            0, MENU_FULLSCREEN, 3,
             getString(if (immersive) R.string.exit_fullscreen else R.string.fullscreen)
         )
-        popup.menu.add(0, MENU_HIDE_BARS, 3, getString(R.string.menu_hide_bars))
+        popup.menu.add(0, MENU_HIDE_BARS, 4, getString(R.string.menu_hide_bars))
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_FIT -> {
@@ -427,6 +541,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 MENU_BG -> chooseBackground { applyBackground(it) }
+                MENU_PDF_ROTATE -> showRotationDialog()
                 MENU_FULLSCREEN -> {
                     immersive = !immersive
                     applyImmersive()
@@ -489,6 +604,31 @@ class MainActivity : AppCompatActivity() {
         }
         binding.canvasView.invalidate()
         scheduleThumbRefresh(120)
+    }
+
+    // ---------------------------------------------------------------- 종료 확인
+
+    private fun confirmExit() {
+        val recording = ScreenRecordService.isRecording
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.exit_title)
+            .setMessage(
+                if (recording) getString(R.string.exit_message_recording)
+                else getString(R.string.exit_message)
+            )
+            .setNegativeButton(R.string.exit_cancel, null)
+            .setPositiveButton(R.string.exit_ok) { _, _ -> exitNow(recording) }
+            .show()
+    }
+
+    private fun exitNow(recording: Boolean) {
+        if (!recording) {
+            finish()
+            return
+        }
+        // 녹화 파일을 마무리할 시간을 준 뒤 앱을 닫는다.
+        ScreenRecordService.stop(this)
+        ui.postDelayed({ finish() }, 600L)
     }
 
     // ---------------------------------------------------------------- 페이지
@@ -716,7 +856,7 @@ class MainActivity : AppCompatActivity() {
         }
         val provider = pdfProvider ?: return
         val pdfIndex = page.pdfPageIndex
-        val targetWidth = page.contentRect.width().toInt().coerceAtLeast(64)
+        val targetWidth = page.backgroundPixelWidth()
         io.execute {
             val bitmap = provider.render(pdfIndex, targetWidth)
             ui.post {
@@ -748,7 +888,7 @@ class MainActivity : AppCompatActivity() {
         if (page.pdfPageIndex < 0) return null
         page.renderedBackground?.let { return it }
         return try {
-            pdfProvider?.render(page.pdfPageIndex, page.contentRect.width().toInt().coerceAtLeast(64))
+            pdfProvider?.render(page.pdfPageIndex, page.backgroundPixelWidth())
         } catch (e: Exception) {
             null
         }
@@ -774,6 +914,10 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) openImage(uri)
         }
 
+    /**
+     * PDF를 고르면 바로 열지 않고, 총 페이지 수를 보여준 뒤
+     * 열 페이지 범위와 회전을 정하게 한다.
+     */
     private fun openPdf(uri: Uri) {
         val provider = PdfPageProvider(this, uri)
         if (!provider.isOpen || provider.pageCount <= 0) {
@@ -781,15 +925,129 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.pdf_open_failed))
             return
         }
+        showPdfOpenDialog(provider, rangeText = "1-${provider.pageCount}", rotation = 0)
+    }
+
+    private fun showPdfOpenDialog(provider: PdfPageProvider, rangeText: String, rotation: Int) {
+        val density = resources.displayMetrics.density
+        val pad = (20 * density).toInt()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, (8 * density).toInt(), pad, 0)
+        }
+
+        val total = TextView(this).apply {
+            text = getString(R.string.pdf_total_pages, provider.pageCount)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.tool_text))
+            textSize = 14f
+        }
+        container.addView(total)
+
+        val rangeLabel = TextView(this).apply {
+            text = getString(R.string.pdf_range_label)
+            setPadding(0, (12 * density).toInt(), 0, (2 * density).toInt())
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.tool_text_selected))
+            textSize = 13f
+        }
+        container.addView(rangeLabel)
+
+        val rangeInput = EditText(this).apply {
+            setText(rangeText)
+            setSelection(text.length)
+            hint = getString(R.string.pdf_range_hint)
+            inputType = InputType.TYPE_CLASS_TEXT
+            textSize = 15f
+        }
+        container.addView(rangeInput)
+
+        val rangeDesc = TextView(this).apply {
+            text = getString(R.string.pdf_range_desc)
+            setTextColor(0x99FFFFFF.toInt())
+            textSize = 11.5f
+            setPadding(0, (2 * density).toInt(), 0, (10 * density).toInt())
+        }
+        container.addView(rangeDesc)
+
+        val rotateLabel = TextView(this).apply {
+            text = getString(R.string.pdf_rotation)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.tool_text_selected))
+            textSize = 13f
+            setPadding(0, (6 * density).toInt(), 0, (2 * density).toInt())
+        }
+        container.addView(rotateLabel)
+
+        val group = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+        }
+        val rotationLabels = arrayOf("0°", "90°", "180°", "270°")
+        for ((i, label) in rotationLabels.withIndex()) {
+            val rb = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = label
+                textSize = 13f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.tool_text))
+                tag = ROTATIONS[i]
+                isChecked = ROTATIONS[i] == rotation
+            }
+            val lp = RadioGroup.LayoutParams(
+                RadioGroup.LayoutParams.WRAP_CONTENT,
+                RadioGroup.LayoutParams.WRAP_CONTENT
+            )
+            lp.marginEnd = (12 * density).toInt()
+            group.addView(rb, lp)
+        }
+        container.addView(group)
+
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.pdf_open_title)
+            .setView(container)
+            .setNegativeButton(R.string.discard_cancel) { _, _ -> provider.close() }
+            .setNeutralButton(R.string.pdf_open_all, null)
+            .setPositiveButton(R.string.pdf_open_ok, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                rangeInput.setText("1-${provider.pageCount}")
+                rangeInput.setSelection(rangeInput.text.length)
+            }
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val pages = PageRange.parse(rangeInput.text.toString(), provider.pageCount)
+                if (pages.isNullOrEmpty()) {
+                    toast(getString(R.string.pdf_range_invalid))
+                    return@setOnClickListener
+                }
+                val checked = group.checkedRadioButtonId
+                val selectedRotation =
+                    if (checked != View.NO_ID) (group.findViewById<RadioButton>(checked)?.tag as? Int ?: 0)
+                    else 0
+                dialog.dismiss()
+                openPdfPages(provider, pages, selectedRotation)
+            }
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                dialog.dismiss()
+                provider.close()
+            }
+        }
+        dialog.show()
+    }
+
+    /** 고른 페이지 범위만 강의에 올린다. */
+    private fun openPdfPages(provider: PdfPageProvider, pages: List<Int>, rotation: Int) {
         closePdf()
         pdfProvider = provider
         val layout = Prefs.noteLayoutEnum()
         lecture.pages.clear()
         thumbBitmaps.clear()
         dirtyPages.clear()
-        for (i in 0 until provider.pageCount) {
-            val aspect = provider.aspectOf(i).coerceIn(0.2f, 5f)
-            val page = makePage(layout, BackgroundStyle.WHITE, i, null, aspect)
+        for (index in pages) {
+            val page = makePage(
+                layout, BackgroundStyle.WHITE, index, null,
+                provider.aspectOf(index).coerceIn(0.05f, 20f)
+            )
+            page.setRotation(rotation)
+            page.applyContentLayout(Prefs.noteAlignEnum(), Prefs.noteMargin)
             lecture.pages.add(page)
             dirtyPages.add(page)
         }
@@ -797,6 +1055,43 @@ class MainActivity : AppCompatActivity() {
         lecture.style = BackgroundStyle.WHITE
         rebuildThumbs()
         showPage()
+        toast(getString(R.string.pdf_opened_pages, lecture.pages.size))
+    }
+
+    /** 상단 메뉴에서 PDF 페이지를 90도 단위로 돌린다. */
+    private fun showRotationDialog() {
+        if (lecture.pages.none { it.pdfPageIndex >= 0 }) {
+            toast(getString(R.string.pdf_rotate_no_pdf))
+            return
+        }
+        val labels = arrayOf(
+            getString(R.string.rotate_0),
+            getString(R.string.rotate_90),
+            getString(R.string.rotate_180),
+            getString(R.string.rotate_270)
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_pdf_rotate)
+            .setItems(labels) { _, which ->
+                rotateAllPdfPages(ROTATIONS.getOrElse(which) { 0 })
+            }
+            .show()
+    }
+
+    private fun rotateAllPdfPages(degrees: Int) {
+        val targets = lecture.pages.filter { it.pdfPageIndex >= 0 }
+        if (targets.isEmpty()) {
+            toast(getString(R.string.pdf_rotate_no_pdf))
+            return
+        }
+        for (page in targets) {
+            page.setRotation(degrees)
+            page.invalidateBackground()
+            page.applyContentLayout(Prefs.noteAlignEnum(), Prefs.noteMargin)
+            dirtyPages.add(page)
+        }
+        showPage()
+        rebuildThumbs()
     }
 
     private fun openImage(uri: Uri) {
@@ -811,7 +1106,7 @@ class MainActivity : AppCompatActivity() {
         thumbBitmaps.clear()
         dirtyPages.clear()
         val page = makePage(
-            Prefs.noteLayoutEnum(), BackgroundStyle.WHITE, -1, bitmap, aspect.coerceIn(0.2f, 5f)
+            Prefs.noteLayoutEnum(), BackgroundStyle.WHITE, -1, bitmap, aspect.coerceIn(0.05f, 20f)
         )
         lecture.pages.add(page)
         dirtyPages.add(page)
@@ -1045,13 +1340,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 상태바·내비바를 숨긴다(전체화면). 스와이프로 잠깐 꺼내는 것만 허용. */
     private fun applyImmersive() {
-        WindowCompat.setDecorFitsSystemWindows(window, !immersive)
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        val controller: WindowInsetsControllerCompat =
+            WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (immersive) {
             controller.hide(WindowInsetsCompat.Type.systemBars())
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
             controller.show(WindowInsetsCompat.Type.systemBars())
         }
@@ -1077,14 +1373,20 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val data = result.data
             if (result.resultCode == Activity.RESULT_OK && data != null) {
+                val area = Prefs.recordArea
+                val crop = if (area == Prefs.REC_AREA_PAGE) canvasRectOnScreen() else null
                 val settings = RecSettings(
                     Prefs.recordHeight,
                     Prefs.recordFps,
                     Prefs.recordBitrateMbps,
-                    pendingMic
+                    pendingMic,
+                    area,
+                    crop
                 )
                 recStartMs = SystemClock.elapsedRealtime()
                 ScreenRecordService.start(this, result.resultCode, data, settings)
+                // 녹화를 시작해도 화면(전체화면·툴바)은 바꾸지 않는다.
+                // 설정에서 '자동 숨김'을 켜 둔 경우에만 숨긴다.
                 if (Prefs.autoHideToolbar) {
                     barsHiddenByRecording = true
                     setBarsVisible(false, false, false)
@@ -1099,11 +1401,43 @@ class MainActivity : AppCompatActivity() {
             launchProjection()
         }
 
+    /** 노트(페이지) 영역의 화면 좌표. '페이지만' 녹화에서 이 영역만 잘라 담는다. */
+    private fun canvasRectOnScreen(): IntArray? {
+        val view = binding.canvasView
+        if (view.width <= 0 || view.height <= 0) return null
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        return intArrayOf(location[0], location[1], view.width, view.height)
+    }
+
     private fun onRecordClicked() {
         if (ScreenRecordService.isRecording) {
             ScreenRecordService.stop(this)
             return
         }
+        showRecordAreaDialog()
+    }
+
+    /** 녹화 전에 어디를 담을지 먼저 고른다. */
+    private fun showRecordAreaDialog() {
+        val labels = arrayOf(
+            getString(R.string.rec_area_page),
+            getString(R.string.rec_area_full)
+        )
+        val checked = if (Prefs.recordArea == Prefs.REC_AREA_FULL) 1 else 0
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.rec_area_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                Prefs.recordArea =
+                    if (which == 1) Prefs.REC_AREA_FULL else Prefs.REC_AREA_PAGE
+                dialog.dismiss()
+                startRecordingWithPermissions()
+            }
+            .setNegativeButton(R.string.discard_cancel, null)
+            .show()
+    }
+
+    private fun startRecordingWithPermissions() {
         val needed = ArrayList<String>()
         if (Prefs.recordMic &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -1145,7 +1479,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRecordUi(recording: Boolean) {
         stopRecTicker()
-        if (recording) {            if (recStartMs == 0L) recStartMs = SystemClock.elapsedRealtime()
+        if (recording) {
+            if (recStartMs == 0L) recStartMs = SystemClock.elapsedRealtime()
             binding.btnRecord.backgroundTintList =
                 ColorStateList.valueOf(0xFF7E1D18.toInt())
             startRecTicker()

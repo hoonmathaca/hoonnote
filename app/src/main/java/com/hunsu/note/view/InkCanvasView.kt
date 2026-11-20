@@ -23,6 +23,11 @@ import kotlin.math.sqrt
  * - 한 손가락(또는 스타일러스): 그리기 (손 도구일 때는 이동)
  * - 두 손가락: 확대/축소 + 이동(팬)
  * - 좌표계: 노트 world 좌표(예: 2560 x 1440), 화면에는 scale/offset 으로 변환
+ *
+ * 지우개는 두 종류다.
+ * - Tool.ERASER: 문지른 곳에 걸린 획을 통째로 지운다(선 전체 지우개).
+ * - Tool.ERASER_PARTIAL: 문지른 부분만 잘라낸다(부분 지우개). 한 획이 두 동강 나면
+ *   남은 조각들이 각각의 획으로 다시 만들어진다.
  */
 class InkCanvasView @JvmOverloads constructor(
     context: Context,
@@ -41,6 +46,9 @@ class InkCanvasView @JvmOverloads constructor(
 
     /** true 면 손가락으로도 그릴 수 있다 (스타일러스 없는 기기 테스트용) */
     var fingerDrawingAllowed: Boolean = true
+
+    /** 필압 감지: 스타일러스가 압력을 지원하면 선 굵기가 자연스럽게 변한다. */
+    var pressureEnabled: Boolean = true
 
     var page: Page? = null
         private set
@@ -66,6 +74,8 @@ class InkCanvasView @JvmOverloads constructor(
     private var mode = MODE_NONE
     private var current: DrawElement? = null
     private var erasePushed = false
+    private var lastEraseX = 0f
+    private var lastEraseY = 0f
 
     private var lastMidX = 0f
     private var lastMidY = 0f
@@ -77,8 +87,9 @@ class InkCanvasView @JvmOverloads constructor(
         private const val MODE_NONE = 0
         private const val MODE_DRAW = 1
         private const val MODE_ERASE = 2
-        private const val MODE_GESTURE = 3
-        private const val MODE_PAN = 4
+        private const val MODE_ERASE_PARTIAL = 3
+        private const val MODE_GESTURE = 4
+        private const val MODE_PAN = 5
 
         private const val MIN_STROKE_STEP = 0.7f
         private const val ERASE_EXTRA = 14f
@@ -129,6 +140,7 @@ class InkCanvasView @JvmOverloads constructor(
     fun screenToWorldX(x: Float): Float = (x - offsetX) / scale
     fun screenToWorldY(y: Float): Float = (y - offsetY) / scale
 
+    /** 화면(뷰) 좌표계에서 지금 노트 영역이 차지하는 사각형. 녹화 영역 계산에 쓴다. */
     fun fitPage() {
         val p = page ?: return
         if (width <= 0 || height <= 0) return
@@ -184,15 +196,26 @@ class InkCanvasView @JvmOverloads constructor(
                 if (!canStartStroke(event.getToolType(0))) return true
                 val wx = screenToWorldX(event.x)
                 val wy = screenToWorldY(event.y)
-                if (tool == Tool.ERASER) {
-                    mode = MODE_ERASE
-                    erasePushed = false
-                    eraseAt(wx, wy)
-                } else {
-                    mode = MODE_DRAW
-                    current = createElement(wx, wy)
-                    onStrokeStarted?.invoke()
-                    invalidate()
+                erasePushed = false
+                when (tool) {
+                    Tool.ERASER -> {
+                        mode = MODE_ERASE
+                        eraseAt(wx, wy)
+                    }
+
+                    Tool.ERASER_PARTIAL -> {
+                        mode = MODE_ERASE_PARTIAL
+                        lastEraseX = wx
+                        lastEraseY = wy
+                        erasePartialAt(wx, wy)
+                    }
+
+                    else -> {
+                        mode = MODE_DRAW
+                        current = createElement(wx, wy, event)
+                        onStrokeStarted?.invoke()
+                        invalidate()
+                    }
                 }
             }
 
@@ -226,6 +249,14 @@ class InkCanvasView @JvmOverloads constructor(
                     }
 
                     MODE_ERASE -> eraseAt(screenToWorldX(event.x), screenToWorldY(event.y))
+
+                    MODE_ERASE_PARTIAL -> {
+                        val wx = screenToWorldX(event.x)
+                        val wy = screenToWorldY(event.y)
+                        erasePartialSweep(lastEraseX, lastEraseY, wx, wy)
+                        lastEraseX = wx
+                        lastEraseY = wy
+                    }
                 }
             }
 
@@ -257,7 +288,25 @@ class InkCanvasView @JvmOverloads constructor(
         return isPen || fingerDrawingAllowed
     }
 
-    private fun createElement(x: Float, y: Float): DrawElement {
+    /** 기기가 보고하는 최대 압력 (압력 미지원이면 1). */
+    private fun maxPressureOf(event: MotionEvent): Float = try {
+        val max = event.device?.getMotionRange(MotionEvent.AXIS_PRESSURE)?.max ?: 1f
+        if (max > 0.0001f) max else 1f
+    } catch (e: Exception) {
+        1f
+    }
+
+    /** 스타일러스 압력을 0~1 로 정규화한다. 압력을 지원하지 않는 기기·손가락은 1 이 된다. */
+    private fun pressureOf(event: MotionEvent): Float {
+        val raw = try {
+            event.getPressure(0)
+        } catch (e: Exception) {
+            return 1f
+        }
+        return (raw / maxPressureOf(event)).coerceIn(0f, 1f)
+    }
+
+    private fun createElement(x: Float, y: Float, event: MotionEvent): DrawElement {
         val kind = when (tool) {
             Tool.PEN -> ElementKind.STROKE
             Tool.HIGHLIGHTER -> ElementKind.HIGHLIGHTER
@@ -265,17 +314,28 @@ class InkCanvasView @JvmOverloads constructor(
             Tool.ARROW -> ElementKind.ARROW
             Tool.RECT -> ElementKind.RECT
             Tool.OVAL -> ElementKind.OVAL
-            Tool.ERASER, Tool.HAND -> ElementKind.STROKE
+            Tool.ERASER, Tool.ERASER_PARTIAL, Tool.HAND -> ElementKind.STROKE
         }
         val width = when (kind) {
-            ElementKind.HIGHLIGHTER -> max(penWidth * 4f, 18f)
+            ElementKind.HIGHLIGHTER -> max(penWidth, 6f)
             ElementKind.STROKE -> penWidth
             else -> max(penWidth, 2f)
         }
         val points = ArrayList<Pt>()
         points.add(Pt(x, y))
         if (PagePainter.isShape(kind)) points.add(Pt(x, y))
-        return DrawElement(kind, penColor, width, points)
+        val element = DrawElement(kind, penColor, width, points)
+        if (usePressureFor(event) && kind == ElementKind.STROKE) {
+            element.pressures.add(pressureOf(event))
+        }
+        return element
+    }
+
+    /** 이 입력에 필압을 적용할지: 설정이 켜져 있고, 스타일러스로 그린 획일 때 */
+    private fun usePressureFor(event: MotionEvent): Boolean {
+        if (!pressureEnabled) return false
+        val toolType = event.getToolType(0)
+        return toolType == MotionEvent.TOOL_TYPE_STYLUS
     }
 
     private fun extendCurrent(event: MotionEvent) {
@@ -286,22 +346,31 @@ class InkCanvasView @JvmOverloads constructor(
             el.cachedPath = null
             return
         }
+        val maxPressure = maxPressureOf(event)
         for (h in 0 until event.historySize) {
+            val historicalPressure = try {
+                (event.getHistoricalPressure(0, h) / maxPressure).coerceIn(0f, 1f)
+            } catch (e: Exception) {
+                pressureOf(event)
+            }
             addPoint(
                 el,
                 screenToWorldX(event.getHistoricalX(0, h)),
-                screenToWorldY(event.getHistoricalY(0, h))
+                screenToWorldY(event.getHistoricalY(0, h)),
+                historicalPressure
             )
         }
-        addPoint(el, screenToWorldX(event.x), screenToWorldY(event.y))
+        addPoint(el, screenToWorldX(event.x), screenToWorldY(event.y), pressureOf(event))
     }
 
-    private fun addPoint(el: DrawElement, wxCandidate: Float, wyCandidate: Float) {
+    private fun addPoint(el: DrawElement, wxCandidate: Float, wyCandidate: Float, pressure: Float) {
         val last = el.points.lastOrNull() ?: return
         val dx = wxCandidate - last.x
         val dy = wyCandidate - last.y
         if (sqrt(dx * dx + dy * dy) < MIN_STROKE_STEP) return
+        val trackPressure = el.pressures.isNotEmpty() && el.pressures.size == el.points.size
         el.points.add(Pt(wxCandidate, wyCandidate))
+        if (trackPressure) el.pressures.add(pressure)
         el.cachedPath = null
     }
 
@@ -320,8 +389,10 @@ class InkCanvasView @JvmOverloads constructor(
             }
         } else if (el.points.size < 2) {
             el.points.add(Pt(el.points[0].x + 0.6f, el.points[0].y + 0.6f))
+            if (el.pressures.isNotEmpty()) el.pressures.add(el.pressures.last())
             el.cachedPath = null
         }
+        if (el.pressures.size != el.points.size) el.pressures.clear()
         p.pushUndo()
         p.elements.add(el)
         invalidate()
@@ -371,6 +442,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ---------------------------------------------------------------- 지우개
 
+    /** 선 전체 지우개: 문지른 곳에 걸린 획을 통째로 지운다. */
     private fun eraseAt(x: Float, y: Float) {
         val p = page ?: return
         var removed: MutableList<DrawElement>? = null
@@ -386,6 +458,107 @@ class InkCanvasView @JvmOverloads constructor(
             erasePushed = true
         }
         p.elements.removeAll(list)
+        invalidate()
+        onPageEdited?.invoke()
+    }
+
+    /** 부분 지우개 반지름 (world 좌표) */
+    private fun partialEraseRadius(): Float = max(penWidth, 6f) * 1.1f + 6f
+
+    /** 빠르게 문질러도 끊기지 않도록 지난 지점과 지금 지점 사이를 촘촘히 지운다. */
+    private fun erasePartialSweep(fromX: Float, fromY: Float, toX: Float, toY: Float) {
+        val radius = partialEraseRadius()
+        val dx = toX - fromX
+        val dy = toY - fromY
+        val length = sqrt(dx * dx + dy * dy)
+        if (length < 0.001f) {
+            erasePartialAt(toX, toY)
+            return
+        }
+        val step = max(radius * 0.5f, 1f)
+        val count = (length / step).toInt().coerceAtLeast(1)
+        for (i in 1..count) {
+            val t = i.toFloat() / count
+            erasePartialAt(fromX + dx * t, fromY + dy * t)
+        }
+    }
+
+    /**
+     * 부분 지우개: 문지른 원 안에 들어온 점들을 잘라내고, 남은 조각을 새 획으로 다시 만든다.
+     * 도형(직선·화살표·사각형·원)은 부분 삭제가 의미 없으므로 닿으면 통째로 지운다.
+     */
+    private fun erasePartialAt(x: Float, y: Float) {
+        val p = page ?: return
+        val radius = partialEraseRadius()
+        val removed = ArrayList<DrawElement>()
+        val added = ArrayList<DrawElement>()
+
+        for (el in p.elements) {
+            if (PagePainter.isShape(el.kind)) {
+                if (hitTest(el, x, y)) removed.add(el)
+                continue
+            }
+            val pts = el.points
+            if (pts.isEmpty()) continue
+            val reach = radius + el.width / 2f
+
+            // 문지른 원 안에 들어온 점과, 원을 스쳐 지나간 선분을 모두 잘라낸다.
+            val inside = BooleanArray(pts.size)
+            var touched = false
+            for (i in pts.indices) {
+                val dx = pts[i].x - x
+                val dy = pts[i].y - y
+                if (sqrt(dx * dx + dy * dy) <= reach) {
+                    inside[i] = true
+                    touched = true
+                }
+            }
+            val cutSegment = BooleanArray((pts.size - 1).coerceAtLeast(0))
+            for (i in 0 until pts.size - 1) {
+                if (distToSegment(x, y, pts[i], pts[i + 1]) <= reach) {
+                    cutSegment[i] = true
+                    touched = true
+                }
+            }
+            if (!touched) continue
+
+            removed.add(el)
+
+            val runs = ArrayList<MutableList<Int>>()
+            var run: MutableList<Int>? = null
+            fun flush() {
+                val current = run ?: return
+                if (current.size >= 2) runs.add(current)
+                run = null
+            }
+
+            for (i in pts.indices) {
+                if (inside[i]) {
+                    flush()
+                    continue
+                }
+                if (i > 0 && cutSegment[i - 1]) flush()
+                if (run == null) run = ArrayList()
+                run!!.add(i)
+            }
+            flush()
+
+            for (r in runs) {
+                val newPoints = r.map { pts[it] }.toMutableList()
+                val newPressures =
+                    if (el.pressures.size == pts.size) r.map { el.pressures[it] }.toMutableList()
+                    else ArrayList()
+                added.add(DrawElement(el.kind, el.color, el.width, newPoints, newPressures))
+            }
+        }
+
+        if (removed.isEmpty()) return
+        if (!erasePushed) {
+            p.pushUndo()
+            erasePushed = true
+        }
+        p.elements.removeAll(removed)
+        p.elements.addAll(added)
         invalidate()
         onPageEdited?.invoke()
     }

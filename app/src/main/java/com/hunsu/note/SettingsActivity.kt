@@ -59,8 +59,16 @@ class SettingsActivity : AppCompatActivity() {
 
         binding.swMic.isChecked = Prefs.recordMic
 
-        binding.seekPenWidth.progress = Prefs.penWidth.toInt().coerceIn(1, 40)
+        binding.seekPenWidth.max = 95
+        binding.seekPenWidth.progress = penProgressOf(Prefs.penWidth)
         updateWidthLabel()
+
+        binding.seekHighlighterWidth.max = 56
+        binding.seekHighlighterWidth.progress =
+            (Prefs.highlighterWidth.toInt() - 4).coerceIn(0, 56)
+        updateHighlighterLabel()
+
+        binding.swPressure.isChecked = Prefs.pressureEnabled
 
         binding.rbPenOnly.isChecked = Prefs.palmMode == Prefs.PALM_PEN_ONLY
         binding.rbFinger.isChecked = Prefs.palmMode != Prefs.PALM_PEN_ONLY
@@ -117,13 +125,29 @@ class SettingsActivity : AppCompatActivity() {
         binding.seekPenWidth.setOnSeekBarChangeListener(object :
             SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                Prefs.penWidth = progress.toFloat().coerceAtLeast(1f)
+                // 0.5 ~ 48 을 0.5 단위로
+                Prefs.penWidth = (progress + 1) / 2f
                 updateWidthLabel()
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
+
+        binding.seekHighlighterWidth.setOnSeekBarChangeListener(object :
+            SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                Prefs.highlighterWidth = (progress + 4).toFloat()
+                updateHighlighterLabel()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+
+        binding.swPressure.setOnCheckedChangeListener { _, checked ->
+            Prefs.pressureEnabled = checked
+        }
 
         binding.swStartFullscreen.setOnCheckedChangeListener { _, checked ->
             Prefs.startFullscreen = checked
@@ -162,10 +186,22 @@ class SettingsActivity : AppCompatActivity() {
             getString(R.string.note_margin) + " : " + binding.seekNoteMargin.progress + "%"
     }
 
+    private fun penProgressOf(width: Float): Int =
+        ((width * 2f).toInt() - 1).coerceIn(0, 95)
+
     private fun updateWidthLabel() {
         binding.tvPenWidthValue.text =
-            getString(R.string.pen_default_width) + " : " + binding.seekPenWidth.progress
+            getString(R.string.pen_default_width) + " : " + formatWidth(Prefs.penWidth)
     }
+
+    private fun updateHighlighterLabel() {
+        binding.tvHighlighterWidthValue.text =
+            getString(R.string.highlighter_width) + " : " + formatWidth(Prefs.highlighterWidth)
+    }
+
+    private fun formatWidth(width: Float): String =
+        if (width == width.toInt().toFloat()) width.toInt().toString()
+        else String.format(java.util.Locale.US, "%.1f", width)
 
     private fun refreshColors() {
         val container: LinearLayout = binding.colorRow
