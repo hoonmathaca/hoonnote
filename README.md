@@ -12,6 +12,10 @@
 `.github/workflows/build-apk.yml` 이 푸시할 때마다 디버그 APK를 만듭니다.
 `gradle-wrapper.jar` 없이 `gradle/actions/setup-gradle@v4` 로 Gradle 8.9 를 받아 `gradle assembleDebug` 를 실행합니다.
 
+> **참고:** 이 워크플로 파일은 GitHub 앱(Pickle)의 `workflows` 권한이 없어 저장소에 아직 올라가 있지 않습니다.
+> GitHub Settings → Applications → Pickle 에서 **Workflows 권한**을 켠 뒤 푸시하거나, GitHub 웹에서
+> `Actions → New workflow` 로 같은 내용을 붙여넣으면 됩니다. 소스 자체는 로컬에서 빌드 검증을 마쳤습니다.
+
 1. GitHub 에 `hoonmathaca/hoonnote` 저장소를 만든다.
 2. 이 폴더를 그대로 푸시한다.
 3. Actions 탭 → `Build Debug APK` → 실행 결과의 **Artifacts** 에서 `app-debug-apk` 다운로드.
