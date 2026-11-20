@@ -1011,8 +1011,8 @@ class MainActivity : AppCompatActivity() {
         binding.topBar.visibility = if (topBarVisible) View.VISIBLE else View.GONE
         binding.thumbPanel.visibility = if (thumbPanelVisible) View.VISIBLE else View.GONE
         binding.toolRail.visibility = if (toolRailVisible) View.VISIBLE else View.GONE
-        val hiddenSomething = !(topBarVisible && thumbPanelVisible && toolRailVisible)
-        binding.handleContainer.visibility = if (hiddenSomething) View.VISIBLE else View.GONE
+        // 상단 바가 없으면 좌우 바를 되살릴 길이 없으므로 작은 복귀 버튼을 띄운다.
+        binding.handleContainer.visibility = if (topBarVisible) View.GONE else View.VISIBLE
         updateBoardInsets()
     }
 
