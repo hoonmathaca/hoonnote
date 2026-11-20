@@ -93,6 +93,7 @@
     <string name="rec_area_page">페이지만 (노트 영역만)</string>
     <string name="rec_area_full">전체화면 (툴바 포함)</string>
     <string name="rec_area_fallback_full">노트 영역 녹화를 시작하지 못해 전체화면으로 녹화합니다</string>
+    <string name="recording_empty">녹화된 화면이 없어 파일을 저장하지 않았습니다</string>
 
     <!-- 새 강의 배경 -->
     <string name="choose_background">배경을 선택하세요</string>

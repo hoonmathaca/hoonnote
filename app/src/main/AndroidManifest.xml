@@ -9,6 +9,8 @@
     <!-- Android 14+ 포그라운드 서비스 / 미디어 프로젝션 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Android 14+ 에서 포그라운드 서비스가 마이크를 쓰려면 microphone 타입도 필요 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Android 9 이하에서 갤러리/다운로드 폴더에 직접 저장할 때만 필요 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -47,7 +49,7 @@
         <service
             android:name=".rec.ScreenRecordService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|microphone" />
     </application>
 
 </manifest>

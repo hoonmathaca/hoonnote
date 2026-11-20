@@ -1,5 +1,6 @@
 package com.hunsu.note.rec
 
+import android.Manifest
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,6 +10,7 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -28,6 +30,7 @@ import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.hunsu.note.MainActivity
 import com.hunsu.note.Prefs
 import com.hunsu.note.R
@@ -147,7 +150,11 @@ class ScreenRecordService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 if (isRecording) return START_NOT_STICKY
-                startForegroundSafely()
+                val wantsMic = intent.getBooleanExtra(EXTRA_MIC, true) &&
+                    ContextCompat.checkSelfPermission(
+                        this, Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+                startForegroundSafely(wantsMic)
                 if (!startedForeground) return START_NOT_STICKY
                 if (!beginRecording(intent)) {
                     finishRecording(fromProjection = false)
@@ -205,21 +212,38 @@ class ScreenRecordService : Service() {
             .build()
     }
 
-    private fun startForegroundSafely() {
+    private fun startForegroundSafely(withMic: Boolean) {
         if (startedForeground) return
         createChannel()
         val notification = buildNotification()
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
-            } else {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            try {
                 startForeground(NOTIFICATION_ID, notification)
+                startedForeground = true
+            } catch (e: Exception) {
+                Log.e(TAG, "startForeground 실패", e)
+                notifyMessage(getString(R.string.recording_failed, e.message ?: ""))
+                stopSelf()
             }
+            return
+        }
+        // Android 14 부터는 마이크를 쓰는 포그라운드 서비스에 microphone 타입이 필요하다.
+        val micType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        val projectionType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        val types = if (withMic) projectionType or micType else projectionType
+        try {
+            startForeground(NOTIFICATION_ID, notification, types)
             startedForeground = true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "마이크 타입으로 시작 실패 — 화면 녹화만으로 재시도", e)
+            try {
+                startForeground(NOTIFICATION_ID, notification, projectionType)
+                startedForeground = true
+            } catch (second: Exception) {
+                Log.e(TAG, "startForeground 실패", second)
+                notifyMessage(getString(R.string.recording_failed, second.message ?: ""))
+                stopSelf()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "startForeground 실패", e)
             notifyMessage(getString(R.string.recording_failed, e.message ?: ""))
@@ -583,6 +607,7 @@ class ScreenRecordService : Service() {
             }
             outputParcel = null
             discardOutput()
+            notifyMessage(getString(R.string.recording_empty))
             return null
         }
 
