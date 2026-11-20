@@ -4,6 +4,7 @@ import android.graphics.Color
 import com.hunsu.note.model.NoteAlign
 import com.hunsu.note.model.NoteLayout
 import com.hunsu.note.model.StrokeWidths
+import com.hunsu.note.rec.RecordQuality
 
 /**
  * 사용자 설정 저장소. 모든 값은 SharedPreferences 에 즉시 반영된다.
@@ -24,8 +25,15 @@ object Prefs {
     private const val KEY_PALM_MODE = "palm_mode"
     private const val KEY_REC_HEIGHT = "rec_height"
     private const val KEY_REC_FPS = "rec_fps"
+
+    /** 3.1 이하: Mbps 정수. 3.2 부터는 [KEY_REC_BITRATE_KBPS] 로 옮겨 읽는다. */
     private const val KEY_REC_BITRATE = "rec_bitrate"
+    private const val KEY_REC_BITRATE_KBPS = "rec_bitrate_kbps"
     private const val KEY_REC_MIC = "rec_mic"
+
+    /** 비트레이트 안전 범위(kbps) */
+    private const val MIN_BITRATE_KBPS = 300
+    private const val MAX_BITRATE_KBPS = 40_000
     private const val KEY_START_FULLSCREEN = "start_fullscreen"
     private const val KEY_AUTO_HIDE_TOOLBAR = "auto_hide_toolbar"
     private const val KEY_NOTE_LAYOUT = "note_layout"
@@ -71,16 +79,44 @@ object Prefs {
         set(value) = p().edit().putInt(KEY_PALM_MODE, value).apply()
 
     var recordHeight: Int
-        get() = p().getInt(KEY_REC_HEIGHT, 1080)
+        get() = p().getInt(KEY_REC_HEIGHT, RecordQuality.DEFAULT.height)
         set(value) = p().edit().putInt(KEY_REC_HEIGHT, value).apply()
 
     var recordFps: Int
-        get() = p().getInt(KEY_REC_FPS, 30)
+        get() = p().getInt(KEY_REC_FPS, RecordQuality.DEFAULT.fps)
         set(value) = p().edit().putInt(KEY_REC_FPS, value).apply()
 
-    var recordBitrateMbps: Int
-        get() = p().getInt(KEY_REC_BITRATE, 12)
-        set(value) = p().edit().putInt(KEY_REC_BITRATE, value).apply()
+    /** 영상 비트레이트(kbps). 3.1 의 Mbps 정수 값은 처음 읽을 때 한 번만 환산해 옮긴다. */
+    var recordBitrateKbps: Int
+        get() {
+            val prefs = p()
+            if (!prefs.contains(KEY_REC_BITRATE_KBPS)) {
+                val oldMbps = prefs.getInt(KEY_REC_BITRATE, -1)
+                if (oldMbps > 0) {
+                    val migrated = (oldMbps * 1000).coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS)
+                    prefs.edit().putInt(KEY_REC_BITRATE_KBPS, migrated).apply()
+                    return migrated
+                }
+            }
+            return prefs.getInt(KEY_REC_BITRATE_KBPS, RecordQuality.DEFAULT.bitrateKbps)
+                .coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS)
+        }
+        set(value) = p().edit()
+            .putInt(KEY_REC_BITRATE_KBPS, value.coerceIn(MIN_BITRATE_KBPS, MAX_BITRATE_KBPS))
+            .apply()
+
+    /** 지금 해상도·프레임·비트레이트가 어느 화질 프리셋과 같은지(직접 고른 값이면 null) */
+    val recordQuality: RecordQuality?
+        get() = RecordQuality.matchOf(recordHeight, recordFps, recordBitrateKbps)
+
+    /** 화질 프리셋 하나를 해상도·프레임·비트레이트에 한 번에 적용한다. */
+    fun applyRecordQuality(quality: RecordQuality) {
+        p().edit()
+            .putInt(KEY_REC_HEIGHT, quality.height)
+            .putInt(KEY_REC_FPS, quality.fps)
+            .putInt(KEY_REC_BITRATE_KBPS, quality.bitrateKbps)
+            .apply()
+    }
 
     var recordMic: Boolean
         get() = p().getBoolean(KEY_REC_MIC, true)

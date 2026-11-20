@@ -43,14 +43,14 @@ import java.util.Locale
 data class RecSettings(
     val height: Int,
     val fps: Int,
-    val bitrateMbps: Int,
+    val bitrateKbps: Int,
     val mic: Boolean
 ) {
     companion object {
         fun fromPrefs(): RecSettings = RecSettings(
             Prefs.recordHeight,
             Prefs.recordFps,
-            Prefs.recordBitrateMbps,
+            Prefs.recordBitrateKbps,
             Prefs.recordMic
         )
     }
@@ -78,7 +78,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_HEIGHT = "height"
         const val EXTRA_FPS = "fps"
-        const val EXTRA_BITRATE_MBPS = "bitrate_mbps"
+        const val EXTRA_BITRATE_KBPS = "bitrate_kbps"
         const val EXTRA_MIC = "mic"
         const val EXTRA_IS_RECORDING = "is_recording"
         const val EXTRA_SAVED_PATH = "saved_path"
@@ -97,7 +97,7 @@ class ScreenRecordService : Service() {
                 putExtra(EXTRA_RESULT_DATA, data)
                 putExtra(EXTRA_HEIGHT, settings.height)
                 putExtra(EXTRA_FPS, settings.fps)
-                putExtra(EXTRA_BITRATE_MBPS, settings.bitrateMbps)
+                putExtra(EXTRA_BITRATE_KBPS, settings.bitrateKbps)
                 putExtra(EXTRA_MIC, settings.mic)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -272,22 +272,24 @@ class ScreenRecordService : Service() {
         projection = mediaProjection
         mediaProjection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
 
-        val targetHeight = intent.getIntExtra(EXTRA_HEIGHT, 1080)
-        val fps = intent.getIntExtra(EXTRA_FPS, 30)
-        val bitrateMbps = intent.getIntExtra(EXTRA_BITRATE_MBPS, 8)
+        val targetHeight = intent.getIntExtra(EXTRA_HEIGHT, RecordQuality.DEFAULT.height)
+        val fps = intent.getIntExtra(EXTRA_FPS, RecordQuality.DEFAULT.fps)
+        val bitrateKbps = intent.getIntExtra(
+            EXTRA_BITRATE_KBPS, RecordQuality.DEFAULT.bitrateKbps
+        )
         val withMic = intent.getBooleanExtra(EXTRA_MIC, true)
 
         val display = currentDisplayMetrics()
 
         // 전체화면 녹화 한 가지만 쓴다.
-        return startFullScreenRecording(display, targetHeight, fps, bitrateMbps, withMic)
+        return startFullScreenRecording(display, targetHeight, fps, bitrateKbps, withMic)
     }
 
     private fun startFullScreenRecording(
         display: DisplayMetrics,
         targetHeight: Int,
         fps: Int,
-        bitrateMbps: Int,
+        bitrateKbps: Int,
         withMic: Boolean
     ): Boolean {
         val proj = projection ?: return false
@@ -325,12 +327,12 @@ class ScreenRecordService : Service() {
             newRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
             if (withMic) {
                 newRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                newRecorder.setAudioEncodingBitRate(128_000)
+                newRecorder.setAudioEncodingBitRate(RecordQuality.AUDIO_KBPS * 1000)
                 newRecorder.setAudioSamplingRate(44_100)
             }
             newRecorder.setVideoSize(outWidth, outHeight)
             newRecorder.setVideoFrameRate(fps)
-            newRecorder.setVideoEncodingBitRate(bitrateMbps * 1_000_000)
+            newRecorder.setVideoEncodingBitRate(bitrateKbps * 1000)
             newRecorder.setOutputFile(parcel.fileDescriptor)
             newRecorder.prepare()
             newRecorder.start()

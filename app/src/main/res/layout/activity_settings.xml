@@ -67,6 +67,45 @@
                     style="@style/Widget.HunsuNote.Label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:text="@string/record_quality" />
+
+                <RadioGroup
+                    android:id="@+id/rgQuality"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <RadioButton
+                        android:id="@+id/rbQualityNormal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/record_quality_normal"
+                        android:textColor="@color/tool_text" />
+
+                    <RadioButton
+                        android:id="@+id/rbQualityEconomy"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/record_quality_economy"
+                        android:textColor="@color/tool_text" />
+                </RadioGroup>
+
+                <TextView
+                    android:id="@+id/tvQualityDesc"
+                    style="@style/Widget.HunsuNote.Desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/record_quality_desc_economy" />
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/record_quality_manual" />
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="@string/record_resolution" />
 
                 <RadioGroup
@@ -132,34 +171,34 @@
                     android:orientation="horizontal">
 
                     <RadioButton
-                        android:id="@+id/rb4"
+                        android:id="@+id/rbBitrate15"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="4 Mbps"
+                        android:text="@string/record_bitrate_15"
                         android:textColor="@color/tool_text" />
 
                     <RadioButton
-                        android:id="@+id/rb6"
+                        android:id="@+id/rbBitrate4"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="12dp"
-                        android:text="6 Mbps"
+                        android:text="@string/record_bitrate_4"
                         android:textColor="@color/tool_text" />
 
                     <RadioButton
-                        android:id="@+id/rb8"
+                        android:id="@+id/rbBitrate8"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="12dp"
-                        android:text="8 Mbps"
+                        android:text="@string/record_bitrate_8"
                         android:textColor="@color/tool_text" />
 
                     <RadioButton
-                        android:id="@+id/rb12"
+                        android:id="@+id/rbBitrate12"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="12dp"
-                        android:text="12 Mbps"
+                        android:text="@string/record_bitrate_12"
                         android:textColor="@color/tool_text" />
                 </RadioGroup>
 

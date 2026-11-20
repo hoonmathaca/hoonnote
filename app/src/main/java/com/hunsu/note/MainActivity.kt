@@ -59,6 +59,7 @@ import com.hunsu.note.model.StickyNote
 import com.hunsu.note.model.StrokeWidths
 import com.hunsu.note.model.Tool
 import com.hunsu.note.rec.RecSettings
+import com.hunsu.note.rec.RecordQuality
 import com.hunsu.note.rec.ScreenRecordService
 import com.hunsu.note.util.PageRange
 import java.util.Locale
@@ -126,6 +127,7 @@ class MainActivity : AppCompatActivity() {
 
         private const val MENU_REC_TOGGLE = 41
         private const val MENU_REC_SETTINGS = 42
+        private const val MENU_REC_QUALITY = 43
 
         private const val THUMB_WIDTH = 200
 
@@ -565,16 +567,74 @@ class MainActivity : AppCompatActivity() {
                 else R.string.menu_record_start
             )
         )
-        popup.menu.add(0, MENU_REC_SETTINGS, 1, getString(R.string.section_record))
+        popup.menu.add(
+            0, MENU_REC_QUALITY, 1,
+            getString(
+                R.string.menu_record_quality,
+                qualityShortLabel(Prefs.recordQuality ?: RecordQuality.DEFAULT)
+            )
+        )
+        popup.menu.add(0, MENU_REC_SETTINGS, 2, getString(R.string.section_record))
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_REC_TOGGLE -> onRecordClicked()
+                MENU_REC_QUALITY -> showRecordQualityDialog()
                 MENU_REC_SETTINGS ->
                     startActivity(Intent(this, SettingsActivity::class.java))
             }
             true
         }
         popup.show()
+    }
+
+    /** 화질 프리셋 이름 (메뉴·토스트용) */
+    private fun qualityShortLabel(quality: RecordQuality): String = when (quality) {
+        RecordQuality.NORMAL -> getString(R.string.record_quality_normal)
+        RecordQuality.ECONOMY -> getString(R.string.record_quality_economy_short)
+    }
+
+    /**
+     * 녹화 화질(용량)을 미리 고르는 팝업. 녹화를 시작하지는 않으므로
+     * 3.1 의 '누르면 곧바로 녹화' 동작은 그대로다.
+     */
+    private fun showRecordQualityDialog() {
+        val order = arrayOf(RecordQuality.ECONOMY, RecordQuality.NORMAL)
+        val withMic = Prefs.recordMic
+        val labels = order.map { quality ->
+            if (quality == RecordQuality.NORMAL) {
+                getString(
+                    R.string.record_quality_item_normal,
+                    quality.estimatedMbPerMinute(withMic)
+                )
+            } else {
+                getString(
+                    R.string.record_quality_item_economy,
+                    quality.estimatedMbPerMinute(withMic)
+                )
+            }
+        }.toTypedArray()
+        val current = Prefs.recordQuality
+        val checked = if (current == null) 0 else order.indexOf(current).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.record_quality_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                applyRecordQuality(order[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.close, null)
+            .show()
+    }
+
+    private fun applyRecordQuality(quality: RecordQuality) {
+        Prefs.applyRecordQuality(quality)
+        val label = qualityShortLabel(quality)
+        val mb = quality.estimatedMbPerMinute(Prefs.recordMic)
+        val message = if (ScreenRecordService.isRecording) {
+            getString(R.string.record_quality_changed_recording, label)
+        } else {
+            getString(R.string.record_quality_changed, label, mb)
+        }
+        toast(message)
     }
 
     private fun chooseBackground(onPick: (BackgroundStyle) -> Unit) {
@@ -1402,7 +1462,7 @@ class MainActivity : AppCompatActivity() {
                 val settings = RecSettings(
                     Prefs.recordHeight,
                     Prefs.recordFps,
-                    Prefs.recordBitrateMbps,
+                    Prefs.recordBitrateKbps,
                     pendingMic
                 )
                 recStartMs = SystemClock.elapsedRealtime()

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">훈노트</string>
-    <string name="app_title">훈노트 3.1</string>
+    <string name="app_title">훈노트 3.2</string>
 
     <!-- 상단 메뉴 바 -->
     <string name="menu_lecture">강의</string>
@@ -147,6 +147,21 @@
     <string name="note_margin_desc">PDF가 노트 높이의 96%를 차지하도록 여백 2%가 기본값입니다.</string>
 
     <string name="section_record">화면 녹화</string>
+    <string name="record_quality">녹화 화질 (용량)</string>
+    <string name="record_quality_normal">일반 (고화질)</string>
+    <string name="record_quality_economy">절약 (720p 저용량 · 강의 공유용)</string>
+    <string name="record_quality_economy_short">절약 (720p 저용량)</string>
+    <string name="record_quality_manual">세부 설정 (직접 고르기)</string>
+    <string name="record_quality_desc">%1$s · %2$d fps · %3$s Mbps — 1분에 약 %4$dMB</string>
+    <string name="record_quality_desc_economy">720p · 24 fps · 1.5 Mbps — 1분에 약 12MB · 선오공 Q&amp;A 영상(50MB)에 4분까지</string>
+    <string name="record_quality_custom">직접 설정 · 1분에 약 %1$dMB</string>
+    <string name="record_quality_hint_economy">선오공 Q&amp;A 영상(50MB)에 약 4분까지 올릴 수 있는 크기</string>
+    <string name="record_quality_changed">녹화 화질: %1$s · 1분에 약 %2$dMB</string>
+    <string name="record_quality_changed_recording">녹화 화질: %1$s · 지금 녹화 중인 영상은 그대로이고 다음 녹화부터 적용됩니다</string>
+    <string name="record_quality_title">녹화 화질 (용량)</string>
+    <string name="record_quality_item_normal">일반 (고화질) — 1080p · 1분에 약 %1$dMB</string>
+    <string name="record_quality_item_economy">절약 (720p 저용량) — 1분에 약 %1$dMB, 강의 공유용</string>
+    <string name="menu_record_quality">화질: %1$s</string>
     <string name="record_resolution">해상도</string>
     <string name="record_resolution_720">720p</string>
     <string name="record_resolution_1080">1080p</string>
@@ -154,6 +169,10 @@
     <string name="record_fps_24">24 fps</string>
     <string name="record_fps_30">30 fps</string>
     <string name="record_bitrate">비트레이트</string>
+    <string name="record_bitrate_15">1.5 Mbps</string>
+    <string name="record_bitrate_4">4 Mbps</string>
+    <string name="record_bitrate_8">8 Mbps</string>
+    <string name="record_bitrate_12">12 Mbps</string>
     <string name="record_mic">마이크 녹음</string>
     <string name="record_mic_desc">선생님 목소리를 함께 녹음합니다</string>
 

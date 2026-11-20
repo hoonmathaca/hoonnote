@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hunsu.note.databinding.ActivitySettingsBinding
+import com.hunsu.note.rec.RecordQuality
 
 /**
  * 녹화 / 판서 / 화면 설정 화면. 값은 즉시 SharedPreferences 에 저장된다.
@@ -19,6 +20,9 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
     private var selectedColor = Prefs.defaultPenColor
+
+    /** 프리셋 라디오를 코드로 맞추는 중에는 리스너를 건너뛴다 */
+    private var syncingRecordUi = false
 
     companion object {
         private val PALETTE = intArrayOf(
@@ -45,18 +49,29 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun loadValues() {
+        syncingRecordUi = true
         binding.rb720.isChecked = Prefs.recordHeight <= 720
         binding.rb1080.isChecked = Prefs.recordHeight > 720
 
         binding.rbFps24.isChecked = Prefs.recordFps <= 24
         binding.rbFps30.isChecked = Prefs.recordFps > 24
 
-        val bitrate = Prefs.recordBitrateMbps
-        binding.rb4.isChecked = bitrate <= 4
-        binding.rb6.isChecked = bitrate in 5..6
-        binding.rb8.isChecked = bitrate in 7..8
-        binding.rb12.isChecked = bitrate > 8
+        // 3.1 에서 고른 값(예: 6Mbps)은 선택지에 없을 수 있다. 그때는 억지로 맞추지 않고 비워 둔다.
+        when (Prefs.recordBitrateKbps) {
+            1_500 -> binding.rbBitrate15.isChecked = true
+            4_000 -> binding.rbBitrate4.isChecked = true
+            8_000 -> binding.rbBitrate8.isChecked = true
+            12_000 -> binding.rbBitrate12.isChecked = true
+            else -> binding.rgBitrate.clearCheck()
+        }
 
+        // 둘은 늘 하나만 골라진 상태로 둔다(코드로 바꿀 때 RadioGroup 이 알아서 풀지 않는다).
+        val quality = Prefs.recordQuality
+        binding.rbQualityNormal.isChecked = quality == RecordQuality.NORMAL
+        binding.rbQualityEconomy.isChecked = quality == RecordQuality.ECONOMY
+        syncingRecordUi = false
+
+        updateQualityText()
         binding.swMic.isChecked = Prefs.recordMic
 
         binding.seekPenWidth.max = 95
@@ -96,22 +111,40 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun wireListeners() {
+        binding.rgQuality.setOnCheckedChangeListener { _, checkedId ->
+            if (syncingRecordUi) return@setOnCheckedChangeListener
+            val quality = when (checkedId) {
+                binding.rbQualityNormal.id -> RecordQuality.NORMAL
+                binding.rbQualityEconomy.id -> RecordQuality.ECONOMY
+                else -> null
+            } ?: return@setOnCheckedChangeListener
+            Prefs.applyRecordQuality(quality)
+            loadValues()
+        }
+
         binding.rgResolution.setOnCheckedChangeListener { _, checkedId ->
+            if (syncingRecordUi) return@setOnCheckedChangeListener
             Prefs.recordHeight = if (checkedId == binding.rb720.id) 720 else 1080
+            refreshRecordQuality()
         }
         binding.rgFps.setOnCheckedChangeListener { _, checkedId ->
+            if (syncingRecordUi) return@setOnCheckedChangeListener
             Prefs.recordFps = if (checkedId == binding.rbFps24.id) 24 else 30
+            refreshRecordQuality()
         }
         binding.rgBitrate.setOnCheckedChangeListener { _, checkedId ->
-            Prefs.recordBitrateMbps = when (checkedId) {
-                binding.rb4.id -> 4
-                binding.rb6.id -> 6
-                binding.rb8.id -> 8
-                else -> 12
+            if (syncingRecordUi) return@setOnCheckedChangeListener
+            Prefs.recordBitrateKbps = when (checkedId) {
+                binding.rbBitrate15.id -> 1_500
+                binding.rbBitrate4.id -> 4_000
+                binding.rbBitrate8.id -> 8_000
+                else -> 12_000
             }
+            refreshRecordQuality()
         }
         binding.swMic.setOnCheckedChangeListener { _, checked ->
             Prefs.recordMic = checked
+            refreshRecordQuality()
         }
 
         binding.rgPalm.setOnCheckedChangeListener { _, checkedId ->
@@ -185,6 +218,47 @@ class SettingsActivity : AppCompatActivity() {
         binding.tvNoteMargin.text =
             getString(R.string.note_margin) + " : " + binding.seekNoteMargin.progress + "%"
     }
+
+    /** 화질 프리셋 라디오·설명을 지금 저장된 값에 맞춘다. */
+    private fun refreshRecordQuality() {
+        syncingRecordUi = true
+        // 둘은 늘 하나만 골라진 상태로 둔다(코드로 바꿀 때 RadioGroup 이 알아서 풀지 않는다).
+        val quality = Prefs.recordQuality
+        binding.rbQualityNormal.isChecked = quality == RecordQuality.NORMAL
+        binding.rbQualityEconomy.isChecked = quality == RecordQuality.ECONOMY
+        syncingRecordUi = false
+        updateQualityText()
+    }
+
+    private fun updateQualityText() {
+        val quality = Prefs.recordQuality
+        val withMic = Prefs.recordMic
+        val mb = if (quality != null) {
+            quality.estimatedMbPerMinute(withMic)
+        } else {
+            RecordQuality.estimatedMbPerMinute(Prefs.recordBitrateKbps, withMic)
+        }
+        binding.tvQualityDesc.text = if (quality != null) {
+            var desc = getString(
+                R.string.record_quality_desc,
+                "${quality.height}p",
+                quality.fps,
+                formatMbps(quality.bitrateKbps),
+                mb
+            )
+            if (quality == RecordQuality.ECONOMY) {
+                desc += "\n" + getString(R.string.record_quality_hint_economy)
+            }
+            desc
+        } else {
+            getString(R.string.record_quality_custom, mb)
+        }
+    }
+
+    /** 1500 → "1.5", 12000 → "12" */
+    private fun formatMbps(kbps: Int): String =
+        if (kbps % 1000 == 0) (kbps / 1000).toString()
+        else String.format(java.util.Locale.US, "%.1f", kbps / 1000f)
 
     private fun penProgressOf(width: Float): Int =
         ((width * 2f).toInt() - 1).coerceIn(0, 95)
