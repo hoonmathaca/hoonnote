@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
 
     private var recStartMs = 0L
     private var recTicker: Runnable? = null
+    private var barsHiddenByRecording = false
 
     private var lastAlign = -1
     private var lastMargin = -1f
@@ -1084,7 +1085,10 @@ class MainActivity : AppCompatActivity() {
                 )
                 recStartMs = SystemClock.elapsedRealtime()
                 ScreenRecordService.start(this, result.resultCode, data, settings)
-                if (Prefs.autoHideToolbar) setBarsVisible(false, false, false)
+                if (Prefs.autoHideToolbar) {
+                    barsHiddenByRecording = true
+                    setBarsVisible(false, false, false)
+                }
             } else {
                 toast(getString(R.string.recording_cancelled))
             }
@@ -1141,8 +1145,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRecordUi(recording: Boolean) {
         stopRecTicker()
-        if (recording) {
-            if (recStartMs == 0L) recStartMs = SystemClock.elapsedRealtime()
+        if (recording) {            if (recStartMs == 0L) recStartMs = SystemClock.elapsedRealtime()
             binding.btnRecord.backgroundTintList =
                 ColorStateList.valueOf(0xFF7E1D18.toInt())
             startRecTicker()
@@ -1151,6 +1154,11 @@ class MainActivity : AppCompatActivity() {
             binding.btnRecord.text = getString(R.string.record)
             binding.btnRecord.backgroundTintList =
                 ColorStateList.valueOf(ContextCompat.getColor(this, R.color.record_red))
+            // 녹화 때문에 자동으로 숨긴 바는 녹화가 끝나면 돌려놓는다.
+            if (barsHiddenByRecording) {
+                barsHiddenByRecording = false
+                setBarsVisible(true, true, true)
+            }
         }
     }
 
