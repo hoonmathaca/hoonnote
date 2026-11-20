@@ -55,6 +55,14 @@
                     android:text="@string/menu_lecture" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnNewNote"
+                    style="@style/Widget.HunsuNote.Button.Menu"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/new_note"
+                    android:text="@string/new_note" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnMenuSave"
                     style="@style/Widget.HunsuNote.Button.Menu"
                     android:layout_width="wrap_content"

@@ -47,6 +47,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hunsu.note.databinding.ActivityMainBinding
+import com.hunsu.note.io.PageBackgroundCache
 import com.hunsu.note.io.PageExporter
 import com.hunsu.note.io.PdfPageProvider
 import com.hunsu.note.io.PdfPageSource
@@ -62,6 +63,7 @@ import com.hunsu.note.rec.RecSettings
 import com.hunsu.note.rec.RecordQuality
 import com.hunsu.note.rec.ScreenRecordService
 import com.hunsu.note.util.PageRange
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.min
@@ -74,8 +76,19 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val lecture = Lecture()
-    private var pdfProvider: PdfPageSource? = null
     private val io = Executors.newSingleThreadExecutor()
+
+    /** 페이지 배경(PDF·이미지)은 여기에 파일로 두고, 보는 페이지만 메모리에 올린다. */
+    private lateinit var backgroundCache: PageBackgroundCache
+
+    /** 이어 쌓은 PDF 문서들 — 지금 그려야 하는 문서만 열어 두고, 배경이 다 캐시되면 닫는다. */
+    private val pdfDocs = LinkedHashMap<String, PdfPageSource>()
+    private val pdfUris = HashMap<String, Uri>()
+
+    /** 이미지 페이지의 원본 URI — 캐시 파일이 지워져도 다시 읽어 그릴 수 있게 남긴다. */
+    private val imageUris = HashMap<String, Uri>()
+    private var docSeq = 0
+    private val pendingBackgrounds = HashSet<String>()
     private val ui = Handler(Looper.getMainLooper())
     private val noteViews = HashMap<StickyNote, View>()
 
@@ -115,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_OPEN_PDF = 12
         private const val MENU_OPEN_IMAGE = 13
         private const val MENU_QUIT = 14
+        private const val MENU_NEW_NOTE = 15
 
         private const val MENU_PAGE_ADD = 21
         private const val MENU_PAGE_DELETE = 22
@@ -130,6 +144,9 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_REC_QUALITY = 43
 
         private const val THUMB_WIDTH = 200
+
+        /** 동시에 열어 두는 PDF 렌더러 수 (배경이 다 캐시된 문서부터 닫는다) */
+        private const val MAX_OPEN_DOCS = 8
 
         private val PEN_PALETTE = intArrayOf(
             0xFF111111.toInt(),
@@ -169,6 +186,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        backgroundCache = PageBackgroundCache(File(cacheDir, "page-backgrounds"))
 
         // 상태바·내비바를 완전히 숨기기 위해 창을 시스템 바 뒤까지 확장한다.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -252,7 +270,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         stopRecTicker()
         io.shutdownNow()
-        closePdf()
+        closeAllPdfs()
         super.onDestroy()
     }
 
@@ -281,6 +299,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupBars() {
+        binding.btnNewNote.setOnClickListener { confirmNewNote() }
         binding.btnToggleThumb.setOnClickListener { setThumbPanelVisible(!thumbPanelVisible) }
         binding.btnFoldRail.setOnClickListener { setToolRailVisible(false) }
         binding.btnFoldRailInner.setOnClickListener { setToolRailVisible(false) }
@@ -484,12 +503,14 @@ class MainActivity : AppCompatActivity() {
     private fun showLectureMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, MENU_NEW_LECTURE, 0, getString(R.string.menu_new_lecture))
+        popup.menu.add(0, MENU_NEW_NOTE, 4, getString(R.string.menu_new_note))
         popup.menu.add(0, MENU_OPEN_PDF, 1, getString(R.string.open_pdf))
         popup.menu.add(0, MENU_OPEN_IMAGE, 2, getString(R.string.open_image))
         popup.menu.add(0, MENU_QUIT, 3, getString(R.string.menu_quit))
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_NEW_LECTURE -> confirmNewLecture()
+                MENU_NEW_NOTE -> confirmNewNote()
                 MENU_OPEN_PDF -> pdfPicker.launch(arrayOf("application/pdf"))
                 MENU_OPEN_IMAGE -> imagePicker.launch(arrayOf("image/*"))
                 MENU_QUIT -> confirmExit()
@@ -700,15 +721,19 @@ class MainActivity : AppCompatActivity() {
         style: BackgroundStyle,
         pdfIndex: Int = -1,
         image: Bitmap? = null,
-        aspect: Float = 0f
+        aspect: Float = 0f,
+        sourceId: String = "",
+        id: Long = Page.nextPageId()
     ): Page {
-        val page = Page(layout, style, pdfIndex, image, aspect)
+        val page = Page(layout, style, pdfIndex, image, aspect, sourceId, id)
         page.applyContentLayout(Prefs.noteAlignEnum(), Prefs.noteMargin)
         return page
     }
 
+    /** 모든 페이지·필기·불러온 PDF를 버리고 빈 노트 한 장으로 시작한다. */
     private fun startBlankLecture(style: BackgroundStyle) {
-        closePdf()
+        closeAllPdfs()
+        backgroundCache.clear()
         lecture.pages.clear()
         thumbBitmaps.clear()
         dirtyPages.clear()
@@ -717,6 +742,25 @@ class MainActivity : AppCompatActivity() {
         lecture.index = 0
         rebuildThumbs()
         showPage()
+    }
+
+    /**
+     * 새 노트(전체 비우기). 수업이 바뀌었을 때 한 번에 비운다.
+     * 실수로 누를 수 있으니 확인 팝업을 거친다.
+     */
+    private fun confirmNewNote() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.new_note_title)
+            .setMessage(getString(R.string.new_note_message, lecture.pages.size))
+            .setNegativeButton(R.string.discard_cancel, null)
+            .setPositiveButton(R.string.new_note_ok) { _, _ -> startNewNote() }
+            .show()
+    }
+
+    /** 확인 팝업에서 '비우기'를 눌렀을 때 (테스트에서도 같은 경로를 부른다) */
+    internal fun startNewNote() {
+        startBlankLecture(BackgroundStyle.WHITE)
+        toast(getString(R.string.new_note_done))
     }
 
     private fun confirmNewLecture() {
@@ -745,21 +789,28 @@ class MainActivity : AppCompatActivity() {
             updateUndoRedo()
             return
         }
-        binding.canvasView.setPage(page, page.renderedBackground)
+        val ready = backgroundCache.getMemory(page.backgroundKey)
+            ?: page.renderedBackground?.takeIf { !it.isRecycled }
+        binding.canvasView.setPage(page, ready)
         bindNotes(page)
         updatePageInfo()
         updateUndoRedo()
         loadBackground(page)
+        prefetchAdjacent(lecture.index)
         releaseBackgrounds(page)
         updateThumbSelection()
         scheduleThumbRefresh(200)
     }
 
-    /** 지금 보는 페이지 말고 미리 렌더링해 둔 PDF 배경은 놓아준다(다시 볼 때 새로 그린다). */
+    /**
+     * 메모리에는 지금 보는 페이지만 남긴다.
+     * 캐시에서 밀려난 배경을 페이지가 계속 붙들고 있지 않도록 참조를 놓아준다.
+     */
     private fun releaseBackgrounds(keep: Page) {
+        val inMemory = backgroundCache.memoryKeys().toHashSet()
         for (p in lecture.pages) {
-            if (p === keep || p.image != null) continue
-            p.renderedBackground = null
+            if (p === keep) continue
+            if (p.backgroundKey !in inMemory) p.renderedBackground = null
         }
     }
 
@@ -782,6 +833,31 @@ class MainActivity : AppCompatActivity() {
         showPage()
     }
 
+    /**
+     * 새 페이지들을 지금 노트 아래(뒤)에 이어 붙이고, 방금 붙인 첫 페이지로 이동한다.
+     * 맨 처음 뜨는 빈 노트(내용·필기·포스트잇 없음)뿐이면 그 빈 장은 지우고 새 페이지로 시작한다.
+     * @return 새 페이지가 시작된 위치(0부터)
+     */
+    private fun appendPages(pages: List<Page>): Int {
+        if (pages.isEmpty()) return lecture.index
+        if (isLectureEmpty()) {
+            lecture.pages.clear()
+            thumbBitmaps.clear()
+            dirtyPages.clear()
+        }
+        val start = lecture.pages.size
+        lecture.pages.addAll(pages)
+        for (page in pages) dirtyPages.add(page)
+        lecture.index = start
+        rebuildThumbs()
+        showPage()
+        return start
+    }
+
+    /** 지금 노트가 아직 아무것도 안 쓴 빈 상태인지 */
+    private fun isLectureEmpty(): Boolean =
+        lecture.pages.all { !it.hasContent && it.elements.isEmpty() && it.notes.isEmpty() }
+
     private fun confirmDeletePage() {
         if (lecture.pages.size <= 1) {
             toast(getString(R.string.last_page_cannot_delete))
@@ -796,6 +872,7 @@ class MainActivity : AppCompatActivity() {
                 lecture.pages.removeAt(index)
                 thumbBitmaps.remove(page)
                 dirtyPages.remove(page)
+                backgroundCache.evict(page.backgroundKey)
                 lecture.index = index.coerceIn(0, lecture.pages.size - 1)
                 rebuildThumbs()
                 showPage()
@@ -909,80 +986,196 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- 배경(PDF/이미지)
 
+    /**
+     * 지금 보는 페이지의 배경을 준비한다.
+     * 메모리 → 캐시 파일 → 원본 PDF 순으로 찾고, 새로 그린 배경은 캐시 파일로 남긴다.
+     */
     private fun loadBackground(page: Page) {
-        val image = page.image
-        if (image != null) {
-            page.renderedBackground = image
-            if (lecture.currentPage === page) binding.canvasView.setPageBackground(image)
-            return
-        }
-        if (page.pdfPageIndex < 0) {
+        val key = page.backgroundKey
+        if (!page.hasContent) {
+            page.renderedBackground = null
             if (lecture.currentPage === page) binding.canvasView.setPageBackground(null)
             return
         }
-        val existing = page.renderedBackground
-        if (existing != null && !existing.isRecycled) {
-            if (lecture.currentPage === page) binding.canvasView.setPageBackground(existing)
+        val inMemory = backgroundCache.getMemory(key)
+        if (inMemory != null) {
+            page.renderedBackground = inMemory
+            if (lecture.currentPage === page) binding.canvasView.setPageBackground(inMemory)
             return
         }
-        val provider = pdfProvider ?: return
-        if (!provider.isOpen) return
-        val pdfIndex = page.pdfPageIndex
+        val alreadyLoading = synchronized(pendingBackgrounds) { !pendingBackgrounds.add(key) }
+        if (alreadyLoading) return
+
         val targetWidth = page.backgroundPixelWidth()
         io.execute {
-            // 선명하게 그리되, 아주 큰 페이지에서 메모리가 모자라면 절반 크기로 한 번 더 시도한다.
-            var bitmap = provider.render(pdfIndex, targetWidth)
-            if (bitmap == null) bitmap = provider.render(pdfIndex, targetWidth / 2)
+            var bitmap = backgroundCache.load(key)
+            if (bitmap == null) {
+                // 캐시 파일이 없으면 원본에서 그리고, 다음부터는 파일로 읽도록 저장한다.
+                bitmap = renderFromSource(page, targetWidth)
+                if (bitmap != null) backgroundCache.save(key, bitmap, jpeg = false)
+            }
+            synchronized(pendingBackgrounds) { pendingBackgrounds.remove(key) }
+            if (bitmap != null) backgroundCache.putMemory(key, bitmap)
             ui.post {
-                if (bitmap != null) {
-                    page.renderedBackground = bitmap
+                if (bitmap == null) {
                     if (lecture.currentPage === page) {
-                        binding.canvasView.setPageBackground(bitmap)
+                        toast(getString(R.string.pdf_page_render_failed))
                     }
-                    dirtyPages.add(page)
-                    scheduleThumbRefresh(120)
-                } else if (lecture.currentPage === page) {
-                    toast(getString(R.string.pdf_page_render_failed))
+                    return@post
+                }
+                page.renderedBackground = bitmap
+                if (lecture.currentPage === page) {
+                    binding.canvasView.setPageBackground(bitmap)
+                }
+                releaseBackgrounds(page)
+                dirtyPages.add(page)
+                scheduleThumbRefresh(120)
+                trimOpenDocs(page.sourceId)
+            }
+        }
+    }
+
+    /**
+     * 지금 보는 페이지의 앞뒤 페이지 배경을 미리 캐시 파일로 만들어 둔다.
+     * 수업 중 다음 장으로 넘길 때 기다리지 않도록 하되, 메모리가 아니라 파일에만 남긴다.
+     */
+    private fun prefetchAdjacent(index: Int) {
+        val targets = listOf(index - 1, index + 1)
+            .mapNotNull { lecture.pages.getOrNull(it) }
+            .filter { it.hasContent }
+        if (targets.isEmpty()) return
+        io.execute {
+            for (page in targets) {
+                // 그새 다른 장으로 넘어갔으면 지금 필요 없는 배경은 그리지 않는다.
+                if (lecture.index != index) return@execute
+                val key = page.backgroundKey
+                if (backgroundCache.hasFile(key) || backgroundCache.getMemory(key) != null) continue
+                if (synchronized(pendingBackgrounds) { !pendingBackgrounds.add(key) }) continue
+                try {
+                    val bitmap = renderFromSource(page, page.backgroundPixelWidth()) ?: continue
+                    backgroundCache.save(key, bitmap, jpeg = page.pdfPageIndex < 0)
+                    bitmap.recycle()
+                } finally {
+                    synchronized(pendingBackgrounds) { pendingBackgrounds.remove(key) }
                 }
             }
         }
     }
 
+    /** 이 페이지가 온 PDF·이미지 원본에서 배경을 다시 그린다(필요하면 파일에서 다시 연다). */
+    private fun renderFromSource(page: Page, targetWidth: Int): Bitmap? {
+        if (page.pdfPageIndex < 0) {
+            // 이미지 페이지: 원본 사진을 다시 읽는다(캐시 파일이 디스크 정리로 지워졌을 때).
+            val uri = synchronized(imageUris) { imageUris[page.sourceId] } ?: return null
+            return decodeBitmap(uri)
+        }
+        val source = sourceFor(page) ?: return null
+        return try {
+            source.render(page.pdfPageIndex, targetWidth)
+                ?: source.render(page.pdfPageIndex, targetWidth / 2)
+        } catch (e: Exception) {
+            null
+        } catch (e: OutOfMemoryError) {
+            null
+        }
+    }
+
+    private fun sourceFor(page: Page): PdfPageSource? {
+        synchronized(pdfDocs) {
+            val open = pdfDocs[page.sourceId]
+            if (open != null && open.isOpen) return open
+        }
+        val uri = synchronized(pdfDocs) { pdfUris[page.sourceId] } ?: return null
+        // 오래 전에 닫아 둔 문서는 처음 고른 파일에서 다시 연다.
+        val provider = PdfPageProvider(this, uri)
+        if (!provider.isOpen || provider.pageCount <= 0) {
+            provider.close()
+            return null
+        }
+        synchronized(pdfDocs) { pdfDocs[page.sourceId] = provider }
+        return provider
+    }
+
+    private fun registerDoc(sourceId: String, provider: PdfPageSource, uri: Uri?) {
+        synchronized(pdfDocs) {
+            pdfDocs[sourceId] = provider
+            if (uri != null) pdfUris[sourceId] = uri
+        }
+    }
+
+    /**
+     * 열어 둔 PDF 렌더러가 너무 많아지면, 배경을 모두 캐시 파일로 남긴 문서부터 닫는다.
+     * (다시 필요하면 [sourceFor] 가 처음 고른 파일에서 다시 연다.)
+     */
+    private fun trimOpenDocs(keepSourceId: String) {
+        synchronized(pdfDocs) {
+            if (pdfDocs.size <= MAX_OPEN_DOCS) return
+            val targets = pdfDocs.keys.filter { it != keepSourceId && isDocFullyCached(it) }
+            for (id in targets) {
+                if (pdfDocs.size <= MAX_OPEN_DOCS) break
+                val source = pdfDocs.remove(id) ?: continue
+                try {
+                    source.close()
+                } catch (e: Exception) {
+                    // 무시
+                }
+            }
+        }
+    }
+
+    private fun isDocFullyCached(sourceId: String): Boolean {
+        val pages = lecture.pages.filter { it.sourceId == sourceId }
+        return pages.isNotEmpty() && pages.all { backgroundCache.hasFile(it.backgroundKey) }
+    }
+
     private fun backgroundForThumb(page: Page): Bitmap? {
-        page.image?.let { return it }
-        if (page.pdfPageIndex < 0) return null
+        if (!page.hasContent) return null
         page.renderedBackground?.takeIf { !it.isRecycled }?.let { return it }
-        return try {
-            pdfProvider?.render(page.pdfPageIndex, 360)
-        } catch (e: Exception) {
-            null
-        }
+        backgroundCache.load(page.backgroundKey, THUMB_WIDTH * 2)?.let { return it }
+        return renderFromSource(page, 360)
     }
 
+    /**
+     * 내보내기용 배경. 캐시 파일에서 새로 읽어 준다(메모리에 있는 것을 빌려 쓰지 않는다).
+     * 부른 쪽에서 다 쓴 뒤 recycle 해야 한다.
+     */
     private fun backgroundForExport(page: Page): Bitmap? {
-        page.image?.let { return it }
-        if (page.pdfPageIndex < 0) return null
-        page.renderedBackground?.takeIf { !it.isRecycled }?.let { return it }
-        return try {
-            pdfProvider?.render(page.pdfPageIndex, page.backgroundPixelWidth())
-        } catch (e: Exception) {
-            null
-        }
+        if (!page.hasContent) return null
+        backgroundCache.load(page.backgroundKey)?.let { return it }
+        return renderFromSource(page, page.backgroundPixelWidth())
     }
 
-    private fun closePdf() {
-        try {
-            pdfProvider?.close()
-        } catch (e: Exception) {
-            // 무시
+    private fun closeAllPdfs() {
+        val snapshot: List<PdfPageSource>
+        synchronized(pdfDocs) {
+            snapshot = ArrayList(pdfDocs.values)
+            pdfDocs.clear()
+            pdfUris.clear()
+            synchronized(imageUris) { imageUris.clear() }
         }
-        pdfProvider = null
+        for (source in snapshot) {
+            try {
+                source.close()
+            } catch (e: Exception) {
+                // 무시
+            }
+        }
     }
 
     // ---------------------------------------------------------------- PDF / 이미지 열기
 
     private val pdfPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) openPdf(uri)
+        if (uri != null) {
+            // 이어 쌓은 뒤 배경을 다시 그릴 때(회전 등) 같은 파일을 다시 열 수 있도록 권한을 남긴다.
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // 남길 수 없는 문서 제공자도 있다 — 이번 실행 동안은 그대로 읽을 수 있다.
+            }
+            openPdf(uri)
+        }
     }
 
     private val imagePicker =
@@ -1001,10 +1194,15 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.pdf_open_failed))
             return
         }
-        showPdfOpenDialog(provider, rangeText = "1-${provider.pageCount}", rotation = 0)
+        showPdfOpenDialog(provider, uri, rangeText = "1-${provider.pageCount}", rotation = 0)
     }
 
-    private fun showPdfOpenDialog(provider: PdfPageSource, rangeText: String, rotation: Int) {
+    private fun showPdfOpenDialog(
+        provider: PdfPageSource,
+        uri: Uri,
+        rangeText: String,
+        rotation: Int
+    ) {
         val density = resources.displayMetrics.density
         val pad = (20 * density).toInt()
 
@@ -1099,7 +1297,7 @@ class MainActivity : AppCompatActivity() {
                     if (checked != View.NO_ID) (group.findViewById<RadioButton>(checked)?.tag as? Int ?: 0)
                     else 0
                 dialog.dismiss()
-                openPdfPages(provider, pages, selectedRotation)
+                openPdfPages(provider, pages, selectedRotation, uri)
             }
             dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
                 dialog.dismiss()
@@ -1109,39 +1307,50 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** 고른 페이지 범위만 강의에 올린다. (테스트에서도 같은 경로를 부를 수 있게 internal) */
-    internal fun openPdfPages(provider: PdfPageSource, pages: List<Int>, rotation: Int) {
+    /**
+     * 고른 페이지들을 지금 노트 뒤에 이어서 올린다.
+     * (테스트에서도 같은 경로를 부를 수 있게 internal)
+     */
+    internal fun openPdfPages(
+        provider: PdfPageSource,
+        pages: List<Int>,
+        rotation: Int,
+        uri: Uri? = null
+    ) {
         // 입력한 번호는 1부터 시작하는 '페이지 번호'이므로 0부터 시작하는 렌더러 인덱스로 바꾼다.
         // (이 변환이 빠지면 1페이지짜리 PDF는 모든 페이지가 범위 밖이 되어 흰 화면만 나온다.)
+        val docId = "doc${++docSeq}"
         val built = PdfPages.buildPages(
             provider,
             pages,
             rotation,
             Prefs.noteLayoutEnum(),
             Prefs.noteAlignEnum(),
-            Prefs.noteMargin
+            Prefs.noteMargin,
+            lecture.style,
+            docId
         )
         if (built.isEmpty()) {
             provider.close()
             toast(getString(R.string.pdf_range_invalid))
             return
         }
-        closePdf()
-        pdfProvider = provider
-        lecture.pages.clear()
-        thumbBitmaps.clear()
-        dirtyPages.clear()
-        lecture.pages.addAll(built)
-        for (page in lecture.pages) dirtyPages.add(page)
-        lecture.index = 0
-        lecture.style = BackgroundStyle.WHITE
-        rebuildThumbs()
-        showPage()
-        toast(getString(R.string.pdf_opened_pages, lecture.pages.size))
+        registerDoc(docId, provider, uri)
+        appendPages(built)
+        toast(getString(R.string.pdf_appended_pages, built.size, lecture.pages.size))
     }
 
     /** 테스트용: 지금 열려 있는 강의 페이지 목록 */
     internal fun pdfPagesForTest(): List<Page> = ArrayList(lecture.pages)
+
+    /** 테스트용: 지금 보고 있는 페이지 번호(0부터) */
+    internal fun currentPageIndexForTest(): Int = lecture.index
+
+    /** 테스트용: 페이지 배경 캐시 */
+    internal fun backgroundCacheForTest(): PageBackgroundCache = backgroundCache
+
+    /** 테스트용: 페이지 이동 */
+    internal fun goToPageForTest(index: Int) = goToPage(index)
 
     /** 상단 메뉴에서 PDF 페이지를 90도 단위로 돌린다. */
     private fun showRotationDialog() {
@@ -1172,33 +1381,53 @@ class MainActivity : AppCompatActivity() {
         for (page in targets) {
             page.setRotation(degrees)
             page.invalidateBackground()
+            // 회전하면 배경을 그리는 크기·방향이 달라지므로 캐시 파일도 버리고 다시 그린다.
+            backgroundCache.evict(page.backgroundKey)
             page.applyContentLayout(Prefs.noteAlignEnum(), Prefs.noteMargin)
             dirtyPages.add(page)
         }
-        showPage()
         rebuildThumbs()
+        showPage()
     }
 
+    /**
+     * 이미지를 노트 뒤에 이어 붙인다. 사진은 메모리에 들고 있지 않고
+     * 캐시 폴더에 JPEG 로 저장한 뒤, 볼 때만 읽어 온다.
+     */
     private fun openImage(uri: Uri) {
-        val bitmap = decodeBitmap(uri)
-        if (bitmap == null) {
-            toast(getString(R.string.image_open_failed))
-            return
+        val pageId = Page.nextPageId()
+        val sourceId = "img${++docSeq}"
+        synchronized(imageUris) { imageUris[sourceId] = uri }
+        io.execute {
+            val bitmap = decodeBitmap(uri)
+            if (bitmap == null) {
+                ui.post { toast(getString(R.string.image_open_failed)) }
+                return@execute
+            }
+            val aspect = bitmap.width.toFloat() /
+                bitmap.height.toFloat().coerceAtLeast(1f)
+            val key = Page.backgroundKeyFor(pageId)
+            val saved = backgroundCache.save(key, bitmap, jpeg = true)
+            bitmap.recycle()
+            ui.post {
+                if (!saved) {
+                    synchronized(imageUris) { imageUris.remove(sourceId) }
+                    toast(getString(R.string.image_open_failed))
+                    return@post
+                }
+                val page = makePage(
+                    Prefs.noteLayoutEnum(),
+                    lecture.style,
+                    -1,
+                    null,
+                    aspect.coerceIn(0.05f, 20f),
+                    sourceId,
+                    pageId
+                )
+                appendPages(listOf(page))
+                toast(getString(R.string.image_appended_pages, lecture.index + 1))
+            }
         }
-        closePdf()
-        val aspect = bitmap.width.toFloat() / bitmap.height.toFloat().coerceAtLeast(1f)
-        lecture.pages.clear()
-        thumbBitmaps.clear()
-        dirtyPages.clear()
-        val page = makePage(
-            Prefs.noteLayoutEnum(), BackgroundStyle.WHITE, -1, bitmap, aspect.coerceIn(0.05f, 20f)
-        )
-        lecture.pages.add(page)
-        dirtyPages.add(page)
-        lecture.index = 0
-        lecture.style = BackgroundStyle.WHITE
-        rebuildThumbs()
-        showPage()
     }
 
     private fun decodeBitmap(uri: Uri, maxSize: Int = 2400): Bitmap? {
@@ -1246,13 +1475,20 @@ class MainActivity : AppCompatActivity() {
         val pageNumber = lecture.index + 1
         toast(getString(R.string.saving))
         io.execute {
-            val bitmap = PageExporter.renderPage(page, backgroundForExport(page))
-            val saved = PageExporter.savePng(
-                this,
-                bitmap,
-                "HunsuNote_${PageExporter.timestamp()}_p$pageNumber"
-            )
-            bitmap.recycle()
+            var background: Bitmap? = null
+            val saved: String?
+            try {
+                background = backgroundForExport(page)
+                val bitmap = PageExporter.renderPage(page, background)
+                saved = PageExporter.savePng(
+                    this,
+                    bitmap,
+                    "HunsuNote_${PageExporter.timestamp()}_p$pageNumber"
+                )
+                bitmap.recycle()
+            } finally {
+                background?.let { if (!it.isRecycled) it.recycle() }
+            }
             ui.post {
                 if (saved != null) toast(getString(R.string.saved_to_gallery, saved))
                 else toast(getString(R.string.save_failed))
@@ -1265,7 +1501,14 @@ class MainActivity : AppCompatActivity() {
         if (pages.isEmpty()) return
         toast(getString(R.string.saving))
         io.execute {
-            val saved = PageExporter.exportPdf(this, pages, { page -> backgroundForExport(page) })
+            val saved = PageExporter.exportPdf(
+                this,
+                pages,
+                { page -> backgroundForExport(page) },
+                releaseBackground = { bitmap ->
+                    if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+                }
+            )
             ui.post {
                 if (saved != null) toast(getString(R.string.saved_to_downloads, saved))
                 else toast(getString(R.string.save_failed))

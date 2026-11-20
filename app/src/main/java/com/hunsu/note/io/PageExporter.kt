@@ -110,13 +110,16 @@ object PageExporter {
     /**
      * 모든 페이지를 PDF 로 내보낸다.
      * @param backgroundFor 페이지별 배경(PDF 페이지면 렌더링된 비트맵, 빈 페이지면 null)
+     * @param releaseBackground 한 페이지를 다 그린 뒤 그 배경을 돌려주는 곳(메모리 절약용).
+     *        [backgroundFor] 가 새로 만든 비트맵이면 부른 쪽이 recycle 하도록 넘긴다.
      * @return 저장 위치 문자열, 실패 시 null
      */
     fun exportPdf(
         context: Context,
         pages: List<Page>,
         backgroundFor: (Page) -> Bitmap?,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        releaseBackground: (Bitmap?) -> Unit = {}
     ): String? {
         if (pages.isEmpty()) return null
         val document = PdfDocument()
@@ -127,7 +130,8 @@ object PageExporter {
                 val pageHeight = (pageWidth / aspect).toInt().coerceAtLeast(1)
                 val info = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, index + 1).create()
                 val pdfPage = document.startPage(info)
-                val bitmap = renderPage(page, backgroundFor(page))
+                val background = backgroundFor(page)
+                val bitmap = renderPage(page, background)
                 pdfPage.canvas.drawBitmap(
                     bitmap, null,
                     RectF(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat()),
@@ -135,6 +139,7 @@ object PageExporter {
                 )
                 document.finishPage(pdfPage)
                 bitmap.recycle()
+                releaseBackground(background)
                 onProgress(index + 1, pages.size)
             }
             val name = "HunsuNote_${timestamp()}.pdf"

@@ -174,7 +174,11 @@ class Page(
     var style: BackgroundStyle = BackgroundStyle.WHITE,
     val pdfPageIndex: Int = -1,
     val image: Bitmap? = null,
-    val baseAspect: Float = 0f
+    val baseAspect: Float = 0f,
+    /** 어느 PDF·이미지 문서에서 왔는지 (여러 PDF를 이어 쌓을 때 구분한다) */
+    val sourceId: String = "",
+    /** 페이지마다 고유한 번호 — 배경 캐시 파일 이름으로 쓴다 */
+    val id: Long = nextPageId()
 ) {
     val worldWidth: Float get() = layout.width
     val worldHeight: Float get() = layout.height
@@ -216,10 +220,18 @@ class Page(
     val elements = ArrayList<DrawElement>()
     val notes = ArrayList<StickyNote>()
 
-    /** 화면 표시용으로 미리 렌더링해 둔 배경(PDF/이미지) */
+    /** 지금 화면에 올려 둔 배경(PDF/이미지). 메모리 예산을 넘으면 놓아준다. */
     var renderedBackground: Bitmap? = null
 
-    val hasContent: Boolean get() = pdfPageIndex >= 0 || image != null
+    /** 이 페이지 배경이 저장된 캐시 파일의 키 */
+    val backgroundKey: String get() = backgroundKeyFor(id)
+
+    /**
+     * PDF 페이지이거나 이미지 페이지인지.
+     * 3.3 부터 이미지도 비트맵을 들고 있지 않고 캐시 파일에서 읽으므로,
+     * 비율(baseAspect)이 있으면 내용이 있는 페이지로 본다.
+     */
+    val hasContent: Boolean get() = pdfPageIndex >= 0 || image != null || baseAspect > 0f
 
     /** 회전 때문에 배경을 다시 그려야 하는지 (렌더 캐시 무효화) */
     fun invalidateBackground() {
@@ -251,6 +263,13 @@ class Page(
 
     companion object {
         private const val MAX_UNDO = 60
+
+        private val pageIds = java.util.concurrent.atomic.AtomicLong(0L)
+
+        /** 새 페이지 번호 (앱을 켜 둔 동안 겹치지 않는다) */
+        fun nextPageId(): Long = pageIds.incrementAndGet()
+
+        fun backgroundKeyFor(id: Long): String = "page_$id"
 
         /** 노트 world 픽셀 대비 배경 렌더 배율 — 확대해도 또렷하게 보이도록 1.75배로 그린다. */
         const val RENDER_QUALITY = 1.75f

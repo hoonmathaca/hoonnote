@@ -29,6 +29,9 @@ object PdfPages {
      * 고른 페이지들로 강의 페이지를 만든다.
      * PDF는 항상 노트 안쪽 영역에 비율을 유지한 채 최대한 크게(fit-inside) 들어가고,
      * 90/180/270 도 회전도 같은 규칙으로 노트 안에 맞춰진다.
+     *
+     * [sourceId] 는 이 PDF 문서의 이름표다. 3.3 부터 PDF를 이어서 쌓으므로,
+     * 나중에 페이지 배경을 다시 그릴 때 어느 문서에서 왔는지 알아야 한다.
      */
     fun buildPages(
         source: PdfPageSource,
@@ -37,12 +40,13 @@ object PdfPages {
         layout: NoteLayout,
         align: NoteAlign,
         margin: Float,
-        style: BackgroundStyle = BackgroundStyle.WHITE
+        style: BackgroundStyle = BackgroundStyle.WHITE,
+        sourceId: String = ""
     ): List<Page> {
         val pages = ArrayList<Page>()
         for (index in toIndices(pageNumbers, source.pageCount)) {
             val aspect = source.aspectOf(index).coerceIn(0.05f, 20f)
-            val page = Page(layout, style, index, null, aspect)
+            val page = Page(layout, style, index, null, aspect, sourceId)
             page.setRotation(rotation)
             page.applyContentLayout(align, margin)
             pages.add(page)
