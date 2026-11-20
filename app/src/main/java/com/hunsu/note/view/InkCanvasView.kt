@@ -20,9 +20,9 @@ import kotlin.math.sqrt
 
 /**
  * 판서 캔버스.
- * - 한 손가락(또는 스타일러스): 그리기
+ * - 한 손가락(또는 스타일러스): 그리기 (손 도구일 때는 이동)
  * - 두 손가락: 확대/축소 + 이동(팬)
- * - 좌표계: 각 페이지의 world 좌표(예: 1600 x 1000), 화면에는 scale/offset 으로 변환
+ * - 좌표계: 노트 world 좌표(예: 2560 x 1440), 화면에는 scale/offset 으로 변환
  */
 class InkCanvasView @JvmOverloads constructor(
     context: Context,
@@ -70,12 +70,15 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastMidX = 0f
     private var lastMidY = 0f
     private var lastDistance = 0f
+    private var lastPanX = 0f
+    private var lastPanY = 0f
 
     companion object {
         private const val MODE_NONE = 0
         private const val MODE_DRAW = 1
         private const val MODE_ERASE = 2
         private const val MODE_GESTURE = 3
+        private const val MODE_PAN = 4
 
         private const val MIN_STROKE_STEP = 0.7f
         private const val ERASE_EXTRA = 14f
@@ -172,6 +175,12 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 mode = MODE_NONE
+                if (tool == Tool.HAND) {
+                    mode = MODE_PAN
+                    lastPanX = event.x
+                    lastPanY = event.y
+                    return true
+                }
                 if (!canStartStroke(event.getToolType(0))) return true
                 val wx = screenToWorldX(event.x)
                 val wy = screenToWorldY(event.y)
@@ -199,6 +208,17 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 when (mode) {
+                    MODE_PAN -> {
+                        if (event.pointerCount > 0) {
+                            offsetX += event.getX(0) - lastPanX
+                            offsetY += event.getY(0) - lastPanY
+                            lastPanX = event.getX(0)
+                            lastPanY = event.getY(0)
+                            invalidate()
+                            onTransformChanged?.invoke()
+                        }
+                    }
+
                     MODE_GESTURE -> updateGesture(event)
                     MODE_DRAW -> {
                         extendCurrent(event)
@@ -245,7 +265,7 @@ class InkCanvasView @JvmOverloads constructor(
             Tool.ARROW -> ElementKind.ARROW
             Tool.RECT -> ElementKind.RECT
             Tool.OVAL -> ElementKind.OVAL
-            Tool.ERASER -> ElementKind.STROKE
+            Tool.ERASER, Tool.HAND -> ElementKind.STROKE
         }
         val width = when (kind) {
             ElementKind.HIGHLIGHTER -> max(penWidth * 4f, 18f)

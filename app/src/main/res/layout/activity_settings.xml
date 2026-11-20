@@ -282,6 +282,113 @@
                     android:layout_marginTop="24dp"
                     android:text="@string/reset_all" />
             </LinearLayout>
+
+            <!-- 오른쪽 끝: 노트 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="20dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/Widget.HunsuNote.SectionLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_note" />
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/note_size" />
+
+                <RadioGroup
+                    android:id="@+id/rgNoteSize"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <RadioButton
+                        android:id="@+id/rbNoteWide"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_size_wide"
+                        android:textColor="@color/tool_text" />
+
+                    <RadioButton
+                        android:id="@+id/rbNoteFhd"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_size_fhd"
+                        android:textColor="@color/tool_text" />
+
+                    <RadioButton
+                        android:id="@+id/rbNote43"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_size_43"
+                        android:textColor="@color/tool_text" />
+
+                    <RadioButton
+                        android:id="@+id/rbNoteA4"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_size_a4"
+                        android:textColor="@color/tool_text" />
+                </RadioGroup>
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/note_size_desc" />
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/note_align" />
+
+                <RadioGroup
+                    android:id="@+id/rgNoteAlign"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <RadioButton
+                        android:id="@+id/rbAlignLeft"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_align_left"
+                        android:textColor="@color/tool_text" />
+
+                    <RadioButton
+                        android:id="@+id/rbAlignCenter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/note_align_center"
+                        android:textColor="@color/tool_text" />
+                </RadioGroup>
+
+                <TextView
+                    android:id="@+id/tvNoteMargin"
+                    style="@style/Widget.HunsuNote.Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/note_margin" />
+
+                <SeekBar
+                    android:id="@+id/seekNoteMargin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="12"
+                    android:progress="2" />
+
+                <TextView
+                    style="@style/Widget.HunsuNote.Desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/note_margin_desc" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

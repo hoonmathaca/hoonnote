@@ -1,14 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">훈수노트</string>
+    <string name="app_title">훈수노트 2.0</string>
 
-    <!-- 상단 바 -->
+    <!-- 상단 메뉴 바 -->
+    <string name="menu_lecture">강의</string>
+    <string name="menu_save">저장</string>
+    <string name="menu_page">페이지</string>
+    <string name="menu_screen">화면/배경</string>
+    <string name="menu_record">녹화</string>
+    <string name="menu_settings">설정</string>
+
+    <string name="menu_new_lecture">새 강의</string>
+    <string name="menu_quit">종료</string>
+    <string name="menu_page_add">페이지 추가</string>
+    <string name="menu_page_delete">현재 페이지 삭제</string>
+    <string name="menu_fit">화면 맞춤</string>
+    <string name="menu_bg">배경색 바꾸기</string>
+    <string name="menu_fullscreen">전체화면 켜기/끄기</string>
+    <string name="menu_hide_bars">상단·좌우 바 숨기기</string>
+    <string name="menu_record_start">녹화 시작</string>
+    <string name="menu_record_stop">녹화 중지</string>
+
+    <!-- 바 표시 -->
+    <string name="thumb_toggle">페이지 바</string>
+    <string name="rail_fold">도구 접기</string>
+    <string name="hide_all">바 숨기기</string>
+    <string name="expand_toolbar">도구</string>
+
+    <!-- 공통 -->
     <string name="new_lecture">새 강의</string>
-    <string name="open_pdf">PDF</string>
-    <string name="open_image">이미지</string>
-    <string name="add_page">+ 페이지</string>
-    <string name="prev_page">◀</string>
-    <string name="next_page">▶</string>
+    <string name="open_pdf">PDF 열기</string>
+    <string name="open_image">이미지 열기</string>
+    <string name="add_page">페이지 추가</string>
+    <string name="delete_page">페이지 삭제</string>
+    <string name="prev_page">이전 페이지</string>
+    <string name="next_page">다음 페이지</string>
     <string name="save">저장</string>
     <string name="record">● 녹화</string>
     <string name="record_stop">■ 중지</string>
@@ -16,7 +43,6 @@
     <string name="fullscreen">전체화면</string>
     <string name="exit_fullscreen">화면복귀</string>
     <string name="collapse_toolbar">도구 숨김</string>
-    <string name="expand_toolbar">도구</string>
 
     <!-- 도구 -->
     <string name="tool_pen">펜</string>
@@ -27,8 +53,12 @@
     <string name="tool_rect">사각형</string>
     <string name="tool_oval">원</string>
     <string name="tool_note">포스트잇</string>
-    <string name="undo">↶ 실행취소</string>
-    <string name="redo">↷ 다시실행</string>
+    <string name="tool_hand">이동/줌</string>
+    <string name="undo">실행취소</string>
+    <string name="redo">다시실행</string>
+    <string name="width_thin">얇게</string>
+    <string name="width_normal">보통</string>
+    <string name="width_thick">굵게</string>
 
     <!-- 새 강의 배경 -->
     <string name="choose_background">배경을 선택하세요</string>
@@ -37,6 +67,7 @@
     <string name="discard_ok">새로 시작</string>
     <string name="discard_cancel">취소</string>
     <string name="bg_white">화이트</string>
+    <string name="bg_cream">크림</string>
     <string name="bg_green">칠판 녹색</string>
     <string name="bg_navy">다크 네이비</string>
     <string name="bg_grid">모눈</string>
@@ -54,7 +85,9 @@
     <string name="no_page">열린 페이지가 없습니다</string>
     <string name="pdf_open_failed">PDF를 열 수 없습니다</string>
     <string name="image_open_failed">이미지를 열 수 없습니다</string>
-    <string name="empty_page_skipped">빈 페이지는 내보내지 않았습니다</string>
+    <string name="delete_page_confirm">이 페이지를 삭제할까요? 판서도 함께 지워집니다.</string>
+    <string name="delete_page_ok">삭제</string>
+    <string name="last_page_cannot_delete">마지막 남은 페이지는 삭제할 수 없습니다</string>
 
     <!-- 녹화 -->
     <string name="record_notification_channel">화면 녹화</string>
@@ -71,6 +104,19 @@
 
     <!-- 설정 -->
     <string name="settings_title">설정</string>
+    <string name="section_note">노트</string>
+    <string name="note_size">노트 크기</string>
+    <string name="note_size_wide">와이드 16:9 (2560×1440)</string>
+    <string name="note_size_fhd">FHD 16:9 (1920×1080)</string>
+    <string name="note_size_43">4:3 (2048×1536)</string>
+    <string name="note_size_a4">A4 가로 (2970×2100)</string>
+    <string name="note_size_desc">노트 크기는 새 강의·새 페이지부터 적용됩니다.</string>
+    <string name="note_align">PDF·이미지 위치</string>
+    <string name="note_align_left">좌측 정렬 (오른쪽에 풀이 여백)</string>
+    <string name="note_align_center">가운데 정렬</string>
+    <string name="note_margin">노트 여백</string>
+    <string name="note_margin_desc">PDF가 노트 높이의 96%를 차지하도록 여백 2%가 기본값입니다.</string>
+
     <string name="section_record">화면 녹화</string>
     <string name="record_resolution">해상도</string>
     <string name="record_resolution_720">720p</string>
@@ -106,5 +152,9 @@
 
     <!-- 기타 -->
     <string name="page_info">%1$d / %2$d</string>
+    <string name="page_info_default">1 / 1 Page</string>
+    <string name="page_nav_default">1</string>
+    <string name="page_info_format">%1$d / %2$d Page</string>
+    <string name="page_thumbnail">페이지 미리보기</string>
     <string name="recording_indicator">● REC</string>
 </resources>

@@ -40,6 +40,21 @@ object PageExporter {
         return bitmap
     }
 
+    /** 좌측 페이지 바에 쓰는 작은 썸네일을 만든다. */
+    fun renderThumb(page: Page, background: Bitmap?, targetWidth: Int, targetHeight: Int): Bitmap {
+        val width = targetWidth.coerceAtLeast(16)
+        val height = targetHeight.coerceAtLeast(16)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val scale = width / page.worldWidth.coerceAtLeast(1f)
+        canvas.save()
+        canvas.scale(scale, scale)
+        PagePainter.drawPage(canvas, page, background, paint)
+        canvas.restore()
+        return bitmap
+    }
+
     /** 현재 페이지를 PNG 로 저장하고, 저장 위치를 사람이 읽을 수 있는 문자열로 돌려준다. */
     fun savePng(context: Context, bitmap: Bitmap, baseName: String): String? {
         val name = "$baseName.png"

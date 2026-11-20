@@ -1,6 +1,8 @@
 package com.hunsu.note
 
 import android.graphics.Color
+import com.hunsu.note.model.NoteAlign
+import com.hunsu.note.model.NoteLayout
 
 /**
  * 사용자 설정 저장소. 모든 값은 SharedPreferences 에 즉시 반영된다.
@@ -22,6 +24,12 @@ object Prefs {
     private const val KEY_REC_MIC = "rec_mic"
     private const val KEY_START_FULLSCREEN = "start_fullscreen"
     private const val KEY_AUTO_HIDE_TOOLBAR = "auto_hide_toolbar"
+    private const val KEY_NOTE_LAYOUT = "note_layout"
+    private const val KEY_NOTE_ALIGN = "note_align"
+    private const val KEY_NOTE_MARGIN = "note_margin"
+
+    /** 노트 여백 기본값 (노트 크기의 2%) */
+    private const val DEFAULT_NOTE_MARGIN = 0.02f
 
     private fun p() = HunsuApp.prefs()
 
@@ -46,7 +54,7 @@ object Prefs {
         set(value) = p().edit().putInt(KEY_REC_FPS, value).apply()
 
     var recordBitrateMbps: Int
-        get() = p().getInt(KEY_REC_BITRATE, 8)
+        get() = p().getInt(KEY_REC_BITRATE, 12)
         set(value) = p().edit().putInt(KEY_REC_BITRATE, value).apply()
 
     var recordMic: Boolean
@@ -60,6 +68,25 @@ object Prefs {
     var autoHideToolbar: Boolean
         get() = p().getBoolean(KEY_AUTO_HIDE_TOOLBAR, true)
         set(value) = p().edit().putBoolean(KEY_AUTO_HIDE_TOOLBAR, value).apply()
+
+    /** 노트 캔버스 크기 (NoteLayout 순서) */
+    var noteLayout: Int
+        get() = p().getInt(KEY_NOTE_LAYOUT, NoteLayout.DEFAULT_INDEX)
+        set(value) = p().edit().putInt(KEY_NOTE_LAYOUT, value).apply()
+
+    /** PDF/이미지 정렬 (NoteAlign 순서: 0=좌측, 1=가운데) */
+    var noteAlign: Int
+        get() = p().getInt(KEY_NOTE_ALIGN, 0)
+        set(value) = p().edit().putInt(KEY_NOTE_ALIGN, value).apply()
+
+    /** 노트 여백 비율 (0 ~ 0.1) */
+    var noteMargin: Float
+        get() = p().getFloat(KEY_NOTE_MARGIN, DEFAULT_NOTE_MARGIN).coerceIn(0f, 0.12f)
+        set(value) = p().edit().putFloat(KEY_NOTE_MARGIN, value).apply()
+
+    fun noteLayoutEnum(): NoteLayout = NoteLayout.of(noteLayout)
+
+    fun noteAlignEnum(): NoteAlign = NoteAlign.of(noteAlign)
 
     /** 모든 설정 초기화 */
     fun reset() {

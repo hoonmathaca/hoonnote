@@ -29,13 +29,13 @@ class PdfPageProvider(context: Context, uri: Uri) : Closeable {
     }
 
     private val aspects = ArrayList<Float>()
-    private val cache = LinkedHashMap<Int, Bitmap>()
+    private val cache = LinkedHashMap<String, Bitmap>()
 
     @Volatile
     private var closed = false
 
     companion object {
-        private const val CACHE_SIZE = 3
+        private const val CACHE_SIZE = 5
         private const val DEFAULT_ASPECT = 0.7071f // A4 세로
     }
 
@@ -72,10 +72,11 @@ class PdfPageProvider(context: Context, uri: Uri) : Closeable {
     fun render(index: Int, targetWidth: Int): Bitmap? {
         val r = renderer ?: return null
         if (closed || index < 0 || index >= r.pageCount) return null
-        cache[index]?.let { return it }
+        val width = targetWidth.coerceAtLeast(64)
+        val key = "$index:$width"
+        cache[key]?.let { return it }
 
         val aspect = aspectOf(index).coerceIn(0.2f, 5f)
-        val width = targetWidth.coerceAtLeast(64)
         val height = (width / aspect).toInt().coerceAtLeast(64)
 
         val bitmap = try {
@@ -97,7 +98,7 @@ class PdfPageProvider(context: Context, uri: Uri) : Closeable {
             return null
         }
 
-        cache[index] = bitmap
+        cache[key] = bitmap
         while (cache.size > CACHE_SIZE) {
             val eldest = cache.keys.firstOrNull() ?: break
             // 화면에 쓰이고 있을 수 있으므로 recycle 하지 않고 참조만 해제한다.

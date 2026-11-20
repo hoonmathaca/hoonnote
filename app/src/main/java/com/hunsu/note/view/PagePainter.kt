@@ -3,6 +3,7 @@ package com.hunsu.note.view
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -17,13 +18,14 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * 페이지(배경 + 판서 + 포스트잇)를 캔버스에 그리는 공통 로직.
- * 화면 표시(InkCanvasView)와 PNG/PDF 내보내기가 같은 결과를 갖도록 여기서만 그린다.
+ * 페이지(노트 배경 + PDF/이미지 + 판서 + 포스트잇)를 캔버스에 그리는 공통 로직.
+ * 화면 표시(InkCanvasView)와 PNG/PDF 내보내기, 썸네일이 같은 결과를 갖도록 여기서만 그린다.
  */
 object PagePainter {
 
     const val GRID_STEP = 40f
     private const val HIGHLIGHTER_ALPHA = 100
+    private const val GUIDE_STEP = 96f
 
     fun isShape(kind: ElementKind): Boolean =
         kind == ElementKind.LINE || kind == ElementKind.ARROW ||
@@ -63,24 +65,30 @@ object PagePainter {
         }
     }
 
+    /**
+     * 노트 전체를 그린다.
+     * @param background PDF/이미지 배경. page.contentRect 안에만 그려진다.
+     */
     fun drawPage(canvas: Canvas, page: Page, background: Bitmap?, paint: Paint) {
-        // 페이지 바탕
+        // 노트 바탕 (PDF가 있어도 여백은 노트 배경색으로 남는다)
         paint.reset()
         paint.isAntiAlias = true
         paint.style = Paint.Style.FILL
-        paint.color = if (page.isBlank) page.style.bgColor else Color.WHITE
+        paint.color = page.style.bgColor
         canvas.drawRect(0f, 0f, page.worldWidth, page.worldHeight, paint)
 
-        if (background != null) {
-            paint.color = Color.WHITE
+        if (page.style.withGrid && !page.hasContent) drawGrid(canvas, page, paint)
+
+        val content = RectF(page.contentRect)
+        if (background != null && !content.isEmpty) {
+            paint.reset()
+            paint.isAntiAlias = true
             paint.isFilterBitmap = true
-            canvas.drawBitmap(
-                background, null,
-                RectF(0f, 0f, page.worldWidth, page.worldHeight), paint
-            )
+            paint.color = Color.WHITE
+            canvas.drawBitmap(background, null, content, paint)
         }
 
-        if (page.isBlank && page.style.withGrid) drawGrid(canvas, page, paint)
+        if (!content.isEmpty) drawMarginGuides(canvas, page, content, paint)
 
         for (el in page.elements) drawElement(canvas, el, paint)
         drawNotes(canvas, page.notes, paint)
@@ -102,6 +110,39 @@ object PagePainter {
             canvas.drawLine(0f, y, page.worldWidth, y, paint)
             y += GRID_STEP
         }
+    }
+
+    /**
+     * PDF 오른쪽(또는 양옆) 여백에 옅은 점선 안내선을 그린다.
+     * 아이캔노트처럼 풀이 공간이 어디인지 눈에 보이게 한다.
+     */
+    private fun drawMarginGuides(canvas: Canvas, page: Page, content: RectF, paint: Paint) {
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f
+        paint.color = 0x1A000000
+        paint.pathEffect = DashPathEffect(floatArrayOf(10f, 12f), 0f)
+
+        val rightStart = content.right + 32f
+        val rightEnd = page.worldWidth - 32f
+        if (rightEnd - rightStart > 80f) {
+            var y = content.top + GUIDE_STEP
+            while (y < content.bottom) {
+                canvas.drawLine(rightStart, y, rightEnd, y, paint)
+                y += GUIDE_STEP
+            }
+        }
+
+        val leftEnd = content.left - 32f
+        if (leftEnd > 32f) {
+            var y = content.top + GUIDE_STEP
+            while (y < content.bottom) {
+                canvas.drawLine(32f, y, leftEnd, y, paint)
+                y += GUIDE_STEP
+            }
+        }
+        paint.pathEffect = null
     }
 
     fun drawElement(canvas: Canvas, el: DrawElement, paint: Paint) {

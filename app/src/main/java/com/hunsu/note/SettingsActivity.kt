@@ -68,6 +68,21 @@ class SettingsActivity : AppCompatActivity() {
         binding.swStartFullscreen.isChecked = Prefs.startFullscreen
         binding.swAutoHideToolbar.isChecked = Prefs.autoHideToolbar
 
+        binding.rgNoteSize.check(
+            when (Prefs.noteLayout) {
+                1 -> R.id.rbNoteFhd
+                2 -> R.id.rbNote43
+                3 -> R.id.rbNoteA4
+                else -> R.id.rbNoteWide
+            }
+        )
+        binding.rgNoteAlign.check(
+            if (Prefs.noteAlign == 1) R.id.rbAlignCenter else R.id.rbAlignLeft
+        )
+        binding.seekNoteMargin.progress =
+            kotlin.math.round(Prefs.noteMargin * 100f).toInt().coerceIn(0, 12)
+        updateNoteMarginLabel()
+
         selectedColor = Prefs.penColor
         refreshColors()
     }
@@ -117,7 +132,34 @@ class SettingsActivity : AppCompatActivity() {
             Prefs.autoHideToolbar = checked
         }
 
+        binding.rgNoteSize.setOnCheckedChangeListener { _, checkedId ->
+            Prefs.noteLayout = when (checkedId) {
+                R.id.rbNoteFhd -> 1
+                R.id.rbNote43 -> 2
+                R.id.rbNoteA4 -> 3
+                else -> 0
+            }
+        }
+        binding.rgNoteAlign.setOnCheckedChangeListener { _, checkedId ->
+            Prefs.noteAlign = if (checkedId == R.id.rbAlignCenter) 1 else 0
+        }
+        binding.seekNoteMargin.setOnSeekBarChangeListener(object :
+            SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                Prefs.noteMargin = progress / 100f
+                updateNoteMarginLabel()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+
         binding.btnReset.setOnClickListener { confirmReset() }
+    }
+
+    private fun updateNoteMarginLabel() {
+        binding.tvNoteMargin.text =
+            getString(R.string.note_margin) + " : " + binding.seekNoteMargin.progress + "%"
     }
 
     private fun updateWidthLabel() {
