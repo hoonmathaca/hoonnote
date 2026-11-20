@@ -53,7 +53,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * 훈수노트 메인 화면 (아이캔노트형 3영역 레이아웃).
+ * 훈노트 메인 화면 (아이캔노트형 3영역 레이아웃).
  * 상단 메뉴 바 · 좌측 페이지 썸네일 바 · 가운데 노트 캔버스 · 우측 세로 판서 툴바.
  */
 class MainActivity : AppCompatActivity() {

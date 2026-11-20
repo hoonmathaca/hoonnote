@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">훈수노트</string>
-    <string name="app_title">훈수노트 2.0</string>
+    <string name="app_name">훈노트</string>
+    <string name="app_title">훈노트 2.0</string>
 
     <!-- 상단 메뉴 바 -->
     <string name="menu_lecture">강의</string>
@@ -91,7 +91,7 @@
 
     <!-- 녹화 -->
     <string name="record_notification_channel">화면 녹화</string>
-    <string name="record_notification_title">훈수노트 화면 녹화 중</string>
+    <string name="record_notification_title">훈노트 화면 녹화 중</string>
     <string name="record_notification_text">알림의 중지 버튼으로 녹화를 끝낼 수 있습니다.</string>
     <string name="record_stop_action">중지</string>
     <string name="recording_started">녹화를 시작했습니다</string>

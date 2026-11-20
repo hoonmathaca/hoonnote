@@ -176,7 +176,7 @@ class Lecture {
     val pages = ArrayList<Page>()
     var index = 0
     var style: BackgroundStyle = BackgroundStyle.WHITE
-    var title: String = "훈수노트"
+    var title: String = "훈노트"
 
     val currentPage: Page? get() = pages.getOrNull(index)
 
