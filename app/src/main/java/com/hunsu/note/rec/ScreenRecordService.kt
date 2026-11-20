@@ -39,16 +39,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 녹화 설정 묶음 */
+/** 녹화 설정 묶음 (녹화는 전체화면 한 가지만 있다) */
 data class RecSettings(
     val height: Int,
     val fps: Int,
     val bitrateMbps: Int,
-    val mic: Boolean,
-    /** Prefs.REC_AREA_PAGE(노트 영역만) 또는 Prefs.REC_AREA_FULL(화면 전체) */
-    val area: Int = Prefs.REC_AREA_FULL,
-    /** 노트 영역의 화면 좌표 [x, y, width, height] */
-    val crop: IntArray? = null
+    val mic: Boolean
 ) {
     companion object {
         fun fromPrefs(): RecSettings = RecSettings(
@@ -63,8 +59,8 @@ data class RecSettings(
 /**
  * MediaProjection 으로 화면(과 마이크)을 MP4 로 녹화하는 포그라운드 서비스.
  *
- * 녹화 영역이 '페이지만'이면 CropRecorder 로 노트 캔버스 영역만 잘라 담고,
- * '전체화면'이거나 크롭 준비가 실패하면 기존 MediaRecorder 로 화면 전체를 담는다.
+ * 녹화는 전체화면 한 가지만 쓴다(영역 선택·크롭 녹화 없음). 화면 회전·해상도 변화에도
+ * MediaRecorder + VirtualDisplay 만으로 동작해 가장 안정적이다.
  *
  * Android 14 부터는 getMediaProjection() 전에 mediaProjection 타입의 포그라운드 서비스가
  * 먼저 떠 있어야 하므로, 서비스가 startForeground() 를 먼저 호출한 뒤 프로젝션을 얻는다.
@@ -84,8 +80,6 @@ class ScreenRecordService : Service() {
         const val EXTRA_FPS = "fps"
         const val EXTRA_BITRATE_MBPS = "bitrate_mbps"
         const val EXTRA_MIC = "mic"
-        const val EXTRA_AREA = "area"
-        const val EXTRA_CROP = "crop"
         const val EXTRA_IS_RECORDING = "is_recording"
         const val EXTRA_SAVED_PATH = "saved_path"
 
@@ -105,8 +99,6 @@ class ScreenRecordService : Service() {
                 putExtra(EXTRA_FPS, settings.fps)
                 putExtra(EXTRA_BITRATE_MBPS, settings.bitrateMbps)
                 putExtra(EXTRA_MIC, settings.mic)
-                putExtra(EXTRA_AREA, settings.area)
-                settings.crop?.let { putExtra(EXTRA_CROP, it) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -130,7 +122,6 @@ class ScreenRecordService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var recorder: MediaRecorder? = null
-    private var cropRecorder: CropRecorder? = null
     private var outputParcel: ParcelFileDescriptor? = null
     private var outputUri: android.net.Uri? = null
     private var outputFile: File? = null
@@ -285,71 +276,11 @@ class ScreenRecordService : Service() {
         val fps = intent.getIntExtra(EXTRA_FPS, 30)
         val bitrateMbps = intent.getIntExtra(EXTRA_BITRATE_MBPS, 8)
         val withMic = intent.getBooleanExtra(EXTRA_MIC, true)
-        val area = intent.getIntExtra(EXTRA_AREA, Prefs.REC_AREA_FULL)
-        val crop = intent.getIntArrayExtra(EXTRA_CROP)
 
         val display = currentDisplayMetrics()
 
-        // 1) '페이지만' 녹화: 노트 영역만 잘라 담는다.
-        if (area == Prefs.REC_AREA_PAGE && crop != null && crop.size == 4 &&
-            crop[2] > 0 && crop[3] > 0
-        ) {
-            if (startCropRecording(crop, display, targetHeight, fps, bitrateMbps, withMic)) {
-                isRecording = true
-                notifyState(true, null)
-                return true
-            }
-            Log.w(TAG, "노트 영역 녹화 준비 실패 — 전체화면으로 대체")
-            notifyMessage(getString(R.string.rec_area_fallback_full))
-        }
-
-        // 2) 전체화면(기본) 녹화
+        // 전체화면 녹화 한 가지만 쓴다.
         return startFullScreenRecording(display, targetHeight, fps, bitrateMbps, withMic)
-    }
-
-    private fun startCropRecording(
-        crop: IntArray,
-        display: DisplayMetrics,
-        targetHeight: Int,
-        fps: Int,
-        bitrateMbps: Int,
-        withMic: Boolean
-    ): Boolean {
-        val proj = projection ?: return false
-        val name = "HunsuNote_" +
-            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
-        if (!openOutput(name)) return false
-        val parcel = outputParcel
-        if (parcel == null) {
-            discardOutput()
-            return false
-        }
-        val rec = CropRecorder(
-            proj,
-            display.widthPixels,
-            display.heightPixels,
-            display.densityDpi,
-            crop[0],
-            crop[1],
-            crop[2],
-            crop[3],
-            targetHeight,
-            fps,
-            bitrateMbps,
-            withMic,
-            parcel.fileDescriptor
-        )
-        if (!rec.start()) {
-            try {
-                rec.stop()
-            } catch (e: Exception) {
-                // 무시
-            }
-            discardOutput()
-            return false
-        }
-        cropRecorder = rec
-        return true
     }
 
     private fun startFullScreenRecording(
@@ -477,6 +408,7 @@ class ScreenRecordService : Service() {
             true
         } catch (e: Exception) {
             Log.e(TAG, "출력 파일 생성 실패", e)
+            discardOutput()
             notifyMessage(getString(R.string.recording_failed, e.message ?: "저장소"))
             false
         }
@@ -550,19 +482,6 @@ class ScreenRecordService : Service() {
         }
         virtualDisplay = null
 
-        // 페이지만 녹화(크롭) 종료
-        val usedCrop = cropRecorder != null
-        var cropHadTrack = true
-        cropRecorder?.let { crop ->
-            try {
-                crop.stop()
-            } catch (e: Exception) {
-                Log.w(TAG, "crop recorder stop", e)
-            }
-            cropHadTrack = crop.hasTrack()
-        }
-        cropRecorder = null
-
         recorder?.let { rec ->
             try {
                 rec.stop()
@@ -597,19 +516,6 @@ class ScreenRecordService : Service() {
             }
         }
         projection = null
-
-        // 크롭 녹화가 아무것도 담지 못했으면 빈 파일을 남기지 않는다.
-        if (usedCrop && !cropHadTrack) {
-            try {
-                outputParcel?.close()
-            } catch (e: Exception) {
-                // 무시
-            }
-            outputParcel = null
-            discardOutput()
-            notifyMessage(getString(R.string.recording_empty))
-            return null
-        }
 
         try {
             outputParcel?.close()

@@ -49,6 +49,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hunsu.note.databinding.ActivityMainBinding
 import com.hunsu.note.io.PageExporter
 import com.hunsu.note.io.PdfPageProvider
+import com.hunsu.note.io.PdfPageSource
+import com.hunsu.note.io.PdfPages
 import com.hunsu.note.model.BackgroundStyle
 import com.hunsu.note.model.Lecture
 import com.hunsu.note.model.NoteLayout
@@ -71,7 +73,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val lecture = Lecture()
-    private var pdfProvider: PdfPageProvider? = null
+    private var pdfProvider: PdfPageSource? = null
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
     private val noteViews = HashMap<StickyNote, View>()
@@ -688,8 +690,17 @@ class MainActivity : AppCompatActivity() {
         updatePageInfo()
         updateUndoRedo()
         loadBackground(page)
+        releaseBackgrounds(page)
         updateThumbSelection()
         scheduleThumbRefresh(200)
+    }
+
+    /** 지금 보는 페이지 말고 미리 렌더링해 둔 PDF 배경은 놓아준다(다시 볼 때 새로 그린다). */
+    private fun releaseBackgrounds(keep: Page) {
+        for (p in lecture.pages) {
+            if (p === keep || p.image != null) continue
+            p.renderedBackground = null
+        }
     }
 
     private fun goToPage(index: Int) {
@@ -850,15 +861,18 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val existing = page.renderedBackground
-        if (existing != null) {
+        if (existing != null && !existing.isRecycled) {
             if (lecture.currentPage === page) binding.canvasView.setPageBackground(existing)
             return
         }
         val provider = pdfProvider ?: return
+        if (!provider.isOpen) return
         val pdfIndex = page.pdfPageIndex
         val targetWidth = page.backgroundPixelWidth()
         io.execute {
-            val bitmap = provider.render(pdfIndex, targetWidth)
+            // 선명하게 그리되, 아주 큰 페이지에서 메모리가 모자라면 절반 크기로 한 번 더 시도한다.
+            var bitmap = provider.render(pdfIndex, targetWidth)
+            if (bitmap == null) bitmap = provider.render(pdfIndex, targetWidth / 2)
             ui.post {
                 if (bitmap != null) {
                     page.renderedBackground = bitmap
@@ -867,6 +881,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     dirtyPages.add(page)
                     scheduleThumbRefresh(120)
+                } else if (lecture.currentPage === page) {
+                    toast(getString(R.string.pdf_page_render_failed))
                 }
             }
         }
@@ -875,7 +891,7 @@ class MainActivity : AppCompatActivity() {
     private fun backgroundForThumb(page: Page): Bitmap? {
         page.image?.let { return it }
         if (page.pdfPageIndex < 0) return null
-        page.renderedBackground?.let { return it }
+        page.renderedBackground?.takeIf { !it.isRecycled }?.let { return it }
         return try {
             pdfProvider?.render(page.pdfPageIndex, 360)
         } catch (e: Exception) {
@@ -886,7 +902,7 @@ class MainActivity : AppCompatActivity() {
     private fun backgroundForExport(page: Page): Bitmap? {
         page.image?.let { return it }
         if (page.pdfPageIndex < 0) return null
-        page.renderedBackground?.let { return it }
+        page.renderedBackground?.takeIf { !it.isRecycled }?.let { return it }
         return try {
             pdfProvider?.render(page.pdfPageIndex, page.backgroundPixelWidth())
         } catch (e: Exception) {
@@ -928,7 +944,7 @@ class MainActivity : AppCompatActivity() {
         showPdfOpenDialog(provider, rangeText = "1-${provider.pageCount}", rotation = 0)
     }
 
-    private fun showPdfOpenDialog(provider: PdfPageProvider, rangeText: String, rotation: Int) {
+    private fun showPdfOpenDialog(provider: PdfPageSource, rangeText: String, rotation: Int) {
         val density = resources.displayMetrics.density
         val pad = (20 * density).toInt()
 
@@ -1033,30 +1049,39 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** 고른 페이지 범위만 강의에 올린다. */
-    private fun openPdfPages(provider: PdfPageProvider, pages: List<Int>, rotation: Int) {
+    /** 고른 페이지 범위만 강의에 올린다. (테스트에서도 같은 경로를 부를 수 있게 internal) */
+    internal fun openPdfPages(provider: PdfPageSource, pages: List<Int>, rotation: Int) {
+        // 입력한 번호는 1부터 시작하는 '페이지 번호'이므로 0부터 시작하는 렌더러 인덱스로 바꾼다.
+        // (이 변환이 빠지면 1페이지짜리 PDF는 모든 페이지가 범위 밖이 되어 흰 화면만 나온다.)
+        val built = PdfPages.buildPages(
+            provider,
+            pages,
+            rotation,
+            Prefs.noteLayoutEnum(),
+            Prefs.noteAlignEnum(),
+            Prefs.noteMargin
+        )
+        if (built.isEmpty()) {
+            provider.close()
+            toast(getString(R.string.pdf_range_invalid))
+            return
+        }
         closePdf()
         pdfProvider = provider
-        val layout = Prefs.noteLayoutEnum()
         lecture.pages.clear()
         thumbBitmaps.clear()
         dirtyPages.clear()
-        for (index in pages) {
-            val page = makePage(
-                layout, BackgroundStyle.WHITE, index, null,
-                provider.aspectOf(index).coerceIn(0.05f, 20f)
-            )
-            page.setRotation(rotation)
-            page.applyContentLayout(Prefs.noteAlignEnum(), Prefs.noteMargin)
-            lecture.pages.add(page)
-            dirtyPages.add(page)
-        }
+        lecture.pages.addAll(built)
+        for (page in lecture.pages) dirtyPages.add(page)
         lecture.index = 0
         lecture.style = BackgroundStyle.WHITE
         rebuildThumbs()
         showPage()
         toast(getString(R.string.pdf_opened_pages, lecture.pages.size))
     }
+
+    /** 테스트용: 지금 열려 있는 강의 페이지 목록 */
+    internal fun pdfPagesForTest(): List<Page> = ArrayList(lecture.pages)
 
     /** 상단 메뉴에서 PDF 페이지를 90도 단위로 돌린다. */
     private fun showRotationDialog() {
@@ -1373,15 +1398,12 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val data = result.data
             if (result.resultCode == Activity.RESULT_OK && data != null) {
-                val area = Prefs.recordArea
-                val crop = if (area == Prefs.REC_AREA_PAGE) canvasRectOnScreen() else null
+                // 녹화는 항상 전체화면 한 가지 방식만 쓴다(영역 선택 없음).
                 val settings = RecSettings(
                     Prefs.recordHeight,
                     Prefs.recordFps,
                     Prefs.recordBitrateMbps,
-                    pendingMic,
-                    area,
-                    crop
+                    pendingMic
                 )
                 recStartMs = SystemClock.elapsedRealtime()
                 ScreenRecordService.start(this, result.resultCode, data, settings)
@@ -1401,40 +1423,13 @@ class MainActivity : AppCompatActivity() {
             launchProjection()
         }
 
-    /** 노트(페이지) 영역의 화면 좌표. '페이지만' 녹화에서 이 영역만 잘라 담는다. */
-    private fun canvasRectOnScreen(): IntArray? {
-        val view = binding.canvasView
-        if (view.width <= 0 || view.height <= 0) return null
-        val location = IntArray(2)
-        view.getLocationOnScreen(location)
-        return intArrayOf(location[0], location[1], view.width, view.height)
-    }
-
+    /** 녹화 버튼: 누르면 곧바로 전체화면 녹화를 시작하고, 다시 누르면 멈춘다. */
     private fun onRecordClicked() {
         if (ScreenRecordService.isRecording) {
             ScreenRecordService.stop(this)
             return
         }
-        showRecordAreaDialog()
-    }
-
-    /** 녹화 전에 어디를 담을지 먼저 고른다. */
-    private fun showRecordAreaDialog() {
-        val labels = arrayOf(
-            getString(R.string.rec_area_page),
-            getString(R.string.rec_area_full)
-        )
-        val checked = if (Prefs.recordArea == Prefs.REC_AREA_FULL) 1 else 0
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.rec_area_title)
-            .setSingleChoiceItems(labels, checked) { dialog, which ->
-                Prefs.recordArea =
-                    if (which == 1) Prefs.REC_AREA_FULL else Prefs.REC_AREA_PAGE
-                dialog.dismiss()
-                startRecordingWithPermissions()
-            }
-            .setNegativeButton(R.string.discard_cancel, null)
-            .show()
+        startRecordingWithPermissions()
     }
 
     private fun startRecordingWithPermissions() {

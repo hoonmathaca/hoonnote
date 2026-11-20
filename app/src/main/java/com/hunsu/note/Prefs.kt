@@ -16,12 +16,6 @@ object Prefs {
     /** 손가락도 판서 허용 (스타일러스 없는 기기에서 테스트용) */
     const val PALM_FINGER = 1
 
-    /** 녹화 영역: 노트(페이지) 영역만 */
-    const val REC_AREA_PAGE = 0
-
-    /** 녹화 영역: 화면 전체 */
-    const val REC_AREA_FULL = 1
-
     private const val KEY_PEN_WIDTH = "pen_width"
     private const val KEY_PEN_COLOR = "pen_color"
     private const val KEY_HL_WIDTH = "highlighter_width"
@@ -32,7 +26,6 @@ object Prefs {
     private const val KEY_REC_FPS = "rec_fps"
     private const val KEY_REC_BITRATE = "rec_bitrate"
     private const val KEY_REC_MIC = "rec_mic"
-    private const val KEY_REC_AREA = "rec_area"
     private const val KEY_START_FULLSCREEN = "start_fullscreen"
     private const val KEY_AUTO_HIDE_TOOLBAR = "auto_hide_toolbar"
     private const val KEY_NOTE_LAYOUT = "note_layout"
@@ -93,11 +86,7 @@ object Prefs {
         get() = p().getBoolean(KEY_REC_MIC, true)
         set(value) = p().edit().putBoolean(KEY_REC_MIC, value).apply()
 
-    /** 녹화 영역 (REC_AREA_PAGE / REC_AREA_FULL) */
-    var recordArea: Int
-        get() = p().getInt(KEY_REC_AREA, REC_AREA_PAGE)
-        set(value) = p().edit().putInt(KEY_REC_AREA, value).apply()
-
+    /** 시작할 때 전체화면 */
     var startFullscreen: Boolean
         get() = p().getBoolean(KEY_START_FULLSCREEN, true)
         set(value) = p().edit().putBoolean(KEY_START_FULLSCREEN, value).apply()

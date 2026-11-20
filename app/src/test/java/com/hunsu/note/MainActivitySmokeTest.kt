@@ -75,13 +75,16 @@ class MainActivitySmokeTest {
     }
 
     @Test
-    fun `녹화 버튼은 영역 선택 팝업을 띄운다`() {
+    fun `녹화 버튼은 영역 선택 팝업 없이 곧바로 녹화를 시작한다`() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        activity.findViewById<android.view.View>(R.id.btnRecord).performClick()
+        val record = activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnRecord)
+        record.performClick()
 
+        // 3.1: '페이지만/전체화면' 선택 팝업은 없어지고 전체화면 녹화만 남았다.
         val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
-        assertNotNull(dialog)
-        assertTrue(dialog!!.isShowing)
+        assertTrue("녹화 영역 선택 팝업이 아직 뜹니다", dialog == null || !dialog.isShowing)
+        // 녹화 버튼은 그대로 있고, 녹화가 시작되지 않았으면 중지 표시도 아니다.
+        assertEquals(activity.getString(R.string.record), record.text.toString())
     }
 
     @Test

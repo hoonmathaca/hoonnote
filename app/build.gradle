@@ -11,8 +11,8 @@ android {
         applicationId "com.hunsu.note"
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "3.0"
+        versionCode 4
+        versionName "3.1"
         vectorDrawables {
             useSupportLibrary true
         }
@@ -56,6 +56,11 @@ tasks.withType(Test).configureEach {
     def roboHome = System.getenv('ROBOLECTRIC_HOME')
     if (roboHome != null) {
         systemProperty 'user.home', roboHome
+    }
+    // Robolectric 네이티브 런타임/폰트를 임시 폴더(/tmp 는 작을 수 있다)에 풀어 놓는다.
+    def roboTmp = System.getenv('ROBOLECTRIC_TMP')
+    if (roboTmp != null) {
+        systemProperty 'java.io.tmpdir', roboTmp
     }
 }
 

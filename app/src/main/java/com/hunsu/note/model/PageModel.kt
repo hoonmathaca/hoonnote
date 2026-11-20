@@ -3,6 +3,7 @@ package com.hunsu.note.model
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.RectF
+import kotlin.math.sqrt
 
 /** 현재 선택된 판서 도구 */
 enum class Tool { PEN, HIGHLIGHTER, ERASER, ERASER_PARTIAL, LINE, ARROW, RECT, OVAL, HAND }
@@ -235,7 +236,14 @@ class Page(
     /** PDF/이미지를 그릴 때 필요한 원본 픽셀 폭 (회전 90/270 이면 세로 길이가 폭이 된다) */
     fun backgroundPixelWidth(): Int {
         val w = if (rotation % 180 == 90) contentRect.height() else contentRect.width()
-        return w.toInt().coerceAtLeast(64)
+        if (w <= 1f) return RENDER_FALLBACK_WIDTH
+        val aspect = sourceAspect.coerceIn(0.05f, 20f)
+        // 노트 world 픽셀보다 촘촘하게 그려 화면에서 확대해도 선명하게 유지한다.
+        var width = w * RENDER_QUALITY
+        val budget = MAX_RENDER_PIXELS
+        if (width * (width / aspect) > budget) width = sqrt(budget * aspect)
+        if (width > MAX_RENDER_SIDE) width = MAX_RENDER_SIDE.toFloat()
+        return width.toInt().coerceIn(320, MAX_RENDER_SIDE)
     }
 
     private val undoStack = ArrayDeque<ArrayList<DrawElement>>()
@@ -243,6 +251,14 @@ class Page(
 
     companion object {
         private const val MAX_UNDO = 60
+
+        /** 노트 world 픽셀 대비 배경 렌더 배율 — 확대해도 또렷하게 보이도록 1.75배로 그린다. */
+        const val RENDER_QUALITY = 1.75f
+
+        /** 한 장에 쓸 수 있는 픽셀 예산과 최대 변 길이 (메모리 보호) */
+        const val MAX_RENDER_PIXELS = 5_000_000f
+        const val MAX_RENDER_SIDE = 4096
+        const val RENDER_FALLBACK_WIDTH = 1024
     }
 
     /** 요소를 변경하기 직전에 호출한다. */
