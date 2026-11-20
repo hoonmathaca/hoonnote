@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black">
+
+    <FrameLayout
+        android:id="@+id/boardArea"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <com.hunsu.note.view.InkCanvasView
+            android:id="@+id/canvasView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <FrameLayout
+            android:id="@+id/stickyLayer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/toolbarContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="@drawable/bg_toolbar"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:paddingBottom="4dp">
+
+        <HorizontalScrollView
+            android:id="@+id/topScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/topRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnNewLecture"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/new_lecture" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenPdf"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/open_pdf" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenImage"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/open_image" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@color/divider" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddPage"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/add_page" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPrevPage"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/prev_page"
+                    android:text="@string/prev_page" />
+
+                <TextView
+                    android:id="@+id/tvPageInfo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="58dp"
+                    android:gravity="center"
+                    android:textColor="@color/tool_text"
+                    android:textSize="13sp"
+                    android:text="1 / 1" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnNextPage"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/next_page"
+                    android:text="@string/next_page" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@color/divider" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSave"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/save" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRecord"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/record"
+                    android:textColor="@color/record_red" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSettings"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnFullscreen"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/fullscreen" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCollapse"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/collapse_toolbar" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <HorizontalScrollView
+            android:id="@+id/toolScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/toolRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@color/toolbar_row_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPen"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_pen" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnHighlighter"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_highlighter" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnEraser"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_eraser" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@color/divider" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLine"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_line" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnArrow"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_arrow" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRect"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_rect" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOval"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_oval" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@color/divider" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnNote"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tool_note" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="22dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@color/divider" />
+
+                <LinearLayout
+                    android:id="@+id/colorRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal" />
+
+                <SeekBar
+                    android:id="@+id/widthSeek"
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:max="40"
+                    android:progress="6" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnUndo"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/undo" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRedo"
+                    style="@style/Widget.HunsuNote.Button.Tool"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/redo" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/handleContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_handle"
+        android:elevation="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="2dp"
+        android:visibility="gone">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExpand"
+            style="@style/Widget.HunsuNote.Button.Tool"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/expand_toolbar" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPrevCompact"
+            style="@style/Widget.HunsuNote.Button.Tool"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/prev_page"
+            android:text="@string/prev_page" />
+
+        <TextView
+            android:id="@+id/tvPageInfoCompact"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="54dp"
+            android:gravity="center"
+            android:textColor="@color/tool_text"
+            android:textSize="12sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnNextCompact"
+            style="@style/Widget.HunsuNote.Button.Tool"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="@string/next_page"
+            android:text="@string/next_page" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRecordCompact"
+            style="@style/Widget.HunsuNote.Button.Tool"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/record"
+            android:textColor="@color/record_red" />
+    </LinearLayout>
+
+</FrameLayout>

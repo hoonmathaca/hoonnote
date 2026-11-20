@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">훈수노트</string>
+
+    <!-- 상단 바 -->
+    <string name="new_lecture">새 강의</string>
+    <string name="open_pdf">PDF</string>
+    <string name="open_image">이미지</string>
+    <string name="add_page">+ 페이지</string>
+    <string name="prev_page">◀</string>
+    <string name="next_page">▶</string>
+    <string name="save">저장</string>
+    <string name="record">● 녹화</string>
+    <string name="record_stop">■ 중지</string>
+    <string name="settings">설정</string>
+    <string name="fullscreen">전체화면</string>
+    <string name="exit_fullscreen">화면복귀</string>
+    <string name="collapse_toolbar">도구 숨김</string>
+    <string name="expand_toolbar">도구</string>
+
+    <!-- 도구 -->
+    <string name="tool_pen">펜</string>
+    <string name="tool_highlighter">형광펜</string>
+    <string name="tool_eraser">지우개</string>
+    <string name="tool_line">직선</string>
+    <string name="tool_arrow">화살표</string>
+    <string name="tool_rect">사각형</string>
+    <string name="tool_oval">원</string>
+    <string name="tool_note">포스트잇</string>
+    <string name="undo">↶ 실행취소</string>
+    <string name="redo">↷ 다시실행</string>
+
+    <!-- 새 강의 배경 -->
+    <string name="choose_background">배경을 선택하세요</string>
+    <string name="discard_title">새 강의</string>
+    <string name="discard_message">지금 판서가 사라집니다. 새로 시작할까요?</string>
+    <string name="discard_ok">새로 시작</string>
+    <string name="discard_cancel">취소</string>
+    <string name="bg_white">화이트</string>
+    <string name="bg_green">칠판 녹색</string>
+    <string name="bg_navy">다크 네이비</string>
+    <string name="bg_grid">모눈</string>
+
+    <!-- 저장 -->
+    <string name="save_menu_title">저장</string>
+    <string name="save_png">현재 페이지 PNG 저장</string>
+    <string name="save_pdf">전체 페이지 PDF 저장</string>
+
+    <!-- 안내 메시지 -->
+    <string name="saving">저장 중…</string>
+    <string name="saved_to_gallery">갤러리에 저장했습니다: %1$s</string>
+    <string name="saved_to_downloads">다운로드 폴더에 저장했습니다: %1$s</string>
+    <string name="save_failed">저장에 실패했습니다</string>
+    <string name="no_page">열린 페이지가 없습니다</string>
+    <string name="pdf_open_failed">PDF를 열 수 없습니다</string>
+    <string name="image_open_failed">이미지를 열 수 없습니다</string>
+    <string name="empty_page_skipped">빈 페이지는 내보내지 않았습니다</string>
+
+    <!-- 녹화 -->
+    <string name="record_notification_channel">화면 녹화</string>
+    <string name="record_notification_title">훈수노트 화면 녹화 중</string>
+    <string name="record_notification_text">알림의 중지 버튼으로 녹화를 끝낼 수 있습니다.</string>
+    <string name="record_stop_action">중지</string>
+    <string name="recording_started">녹화를 시작했습니다</string>
+    <string name="recording_saving">녹화를 저장하는 중…</string>
+    <string name="recording_saved">동영상 저장 완료: %1$s</string>
+    <string name="recording_failed">녹화를 시작하지 못했습니다: %1$s</string>
+    <string name="recording_cancelled">화면 녹화가 취소되었습니다</string>
+    <string name="permission_audio_needed">마이크 권한이 없어 음성 없이 녹화합니다</string>
+    <string name="permission_notification_needed">알림 권한이 없어 녹화 알림이 보이지 않을 수 있습니다</string>
+
+    <!-- 설정 -->
+    <string name="settings_title">설정</string>
+    <string name="section_record">화면 녹화</string>
+    <string name="record_resolution">해상도</string>
+    <string name="record_resolution_720">720p</string>
+    <string name="record_resolution_1080">1080p</string>
+    <string name="record_fps">프레임레이트</string>
+    <string name="record_fps_24">24 fps</string>
+    <string name="record_fps_30">30 fps</string>
+    <string name="record_bitrate">비트레이트</string>
+    <string name="record_mic">마이크 녹음</string>
+    <string name="record_mic_desc">선생님 목소리를 함께 녹음합니다</string>
+
+    <string name="section_pen">판서</string>
+    <string name="pen_default_width">기본 펜 굵기</string>
+    <string name="pen_default_color">기본 펜 색</string>
+    <string name="palm_rejection">터치 입력</string>
+    <string name="palm_pen_only">펜 전용 (손바닥 무시)</string>
+    <string name="palm_finger">손가락 허용</string>
+    <string name="palm_rejection_desc">스타일러스가 없을 때 테스트하려면 손가락 허용으로 바꾸세요.</string>
+
+    <string name="section_display">화면</string>
+    <string name="start_fullscreen">시작할 때 전체화면</string>
+    <string name="auto_hide_toolbar">녹화 시작 시 도구 막대 자동 숨김</string>
+
+    <string name="reset_all">모든 설정 초기화</string>
+    <string name="reset_confirm">모든 설정을 기본값으로 돌립니다. 계속할까요?</string>
+    <string name="reset_done">모든 설정을 초기화했습니다</string>
+    <string name="close">닫기</string>
+
+    <!-- 포스트잇 -->
+    <string name="sticky_hint">메모 입력…</string>
+    <string name="sticky_delete">×</string>
+    <string name="sticky_added">포스트잇을 추가했습니다 (끌어서 이동)</string>
+
+    <!-- 기타 -->
+    <string name="page_info">%1$d / %2$d</string>
+    <string name="recording_indicator">● REC</string>
+</resources>
