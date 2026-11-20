@@ -187,6 +187,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         backgroundCache = PageBackgroundCache(File(cacheDir, "page-backgrounds"))
+        // 노트 내용은 앱을 끄면 남지 않으므로, 지난 실행에서 남은 배경 캐시 파일을 비운다.
+        backgroundCache.clear()
 
         // 상태바·내비바를 완전히 숨기기 위해 창을 시스템 바 뒤까지 확장한다.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -1053,8 +1055,10 @@ class MainActivity : AppCompatActivity() {
                 if (synchronized(pendingBackgrounds) { !pendingBackgrounds.add(key) }) continue
                 try {
                     val bitmap = renderFromSource(page, page.backgroundPixelWidth()) ?: continue
-                    backgroundCache.save(key, bitmap, jpeg = page.pdfPageIndex < 0)
+                    val saved = backgroundCache.save(key, bitmap, jpeg = page.pdfPageIndex < 0)
                     bitmap.recycle()
+                    // 미리 만들던 페이지로 사용자가 먼저 넘어왔으면 지금 화면에 올려 준다.
+                    if (saved) ui.post { if (lecture.currentPage === page) loadBackground(page) }
                 } finally {
                     synchronized(pendingBackgrounds) { pendingBackgrounds.remove(key) }
                 }

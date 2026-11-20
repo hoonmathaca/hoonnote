@@ -56,8 +56,8 @@ class PageBackgroundCache(
     /**
      * 비트맵을 캐시 파일로 저장한다.
      * PDF(글자·도형 위주)는 PNG, 사진 이미지는 JPEG 로 두어 파일 크기를 줄인다.
+     * 압축은 오래 걸리므로 잠금 없이 하고, 파일 이름표만 잠깐 잠그고 바꾼다(화면이 멈추지 않게).
      */
-    @Synchronized
     fun save(key: String, bitmap: Bitmap, jpeg: Boolean = false): Boolean {
         if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) return false
         if (!dir.exists() && !dir.mkdirs()) return false
@@ -83,15 +83,17 @@ class PageBackgroundCache(
             return false
         }
 
-        // 같은 키의 예전 파일(다른 확장자)이 있으면 지운다.
-        files[key]?.let { if (it.absolutePath != target.absolutePath) it.delete() }
-        target.delete()
-        if (!temp.renameTo(target)) {
-            temp.delete()
-            return false
+        synchronized(this) {
+            // 같은 키의 예전 파일(다른 확장자 포함)이 있으면 지운다.
+            files[key]?.let { if (it.absolutePath != target.absolutePath) it.delete() }
+            target.delete()
+            if (!temp.renameTo(target)) {
+                temp.delete()
+                return false
+            }
+            files[key] = target
+            trimDiskLocked(keepKey = key)
         }
-        files[key] = target
-        trimDisk(keepKey = key)
         return true
     }
 
@@ -99,12 +101,13 @@ class PageBackgroundCache(
      * 캐시 파일을 비트맵으로 읽는다.
      * @param targetWidth 0 이면 원본 크기, 아니면 이 폭보다 조금 큰 표본(2의 거듭제곱)으로 읽는다.
      */
-    @Synchronized
     fun load(key: String, targetWidth: Int = 0): Bitmap? {
-        val file = files[key]
-        if (file == null || !file.exists()) {
-            files.remove(key)
-            return null
+        val file: File = synchronized(this) {
+            val known = files[key]
+            if (known != null && known.exists()) known else {
+                files.remove(key)
+                return null
+            }
         }
         return try {
             if (targetWidth <= 0) {
@@ -199,7 +202,7 @@ class PageBackgroundCache(
     }
 
     /** 디스크 예산을 넘으면 오래 전에 저장한 파일부터 지운다(지금 쓰는 파일은 남긴다). */
-    private fun trimDisk(keepKey: String) {
+    private fun trimDiskLocked(keepKey: String) {
         var total = 0L
         for (file in files.values) if (file.exists()) total += file.length()
         if (total <= maxDiskBytes) return
