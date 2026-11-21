@@ -12,10 +12,8 @@ import com.hunsu.note.model.ElementKind
 import com.hunsu.note.model.Page
 import com.hunsu.note.model.Pt
 import com.hunsu.note.model.StickyNote
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -26,30 +24,96 @@ object PagePainter {
 
     const val GRID_STEP = 40f
 
+    /** 덮개 떡메모지 색 — 배경을 완전히 가리는 불투명 흰색 */
+    const val COVER_COLOR = 0xFFFFFFFF.toInt()
+
     /** 형광펜은 같은 색을 옅게 덮어쓴다(약 43%). */
     const val HIGHLIGHTER_ALPHA = 110
     private const val GUIDE_STEP = 96f
 
     fun isShape(kind: ElementKind): Boolean =
-        kind == ElementKind.LINE || kind == ElementKind.ARROW ||
-            kind == ElementKind.RECT || kind == ElementKind.OVAL
+        kind == ElementKind.LINE || kind == ElementKind.DASHED_LINE ||
+            kind == ElementKind.RECT || kind == ElementKind.OVAL ||
+            kind == ElementKind.TRIANGLE
+
+    /** 부분 지우개로 조각내지 않고 통째로 지우는 요소 (도형·글자·덮개) */
+    fun isAtomic(kind: ElementKind): Boolean =
+        isShape(kind) || kind == ElementKind.TEXT || kind == ElementKind.COVER
 
     fun rectOf(a: Pt, b: Pt): RectF = RectF(
         min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)
     )
+
+    /** 드래그한 사각형에 꼭 맞는 삼각형(위 꼭대기 - 아래 양 모서리) 경로 */
+    fun buildTriangle(r: RectF, path: Path) {
+        path.moveTo(r.centerX(), r.top)
+        path.lineTo(r.right, r.bottom)
+        path.lineTo(r.left, r.bottom)
+        path.close()
+    }
+
+    /**
+     * 글자 요소의 줄 목록. 줄바꿈(\n)을 그대로 유지한다.
+     */
+    fun textLines(text: String): List<String> = text.split("\n")
+
+    /** 글자 한 줄의 기준선 간격 */
+    const val TEXT_LINE_SPACING = 1.3f
+
+    /**
+     * 글자 요소가 차지하는 영역. points[0] 이 글자의 왼쪽 위 모서리다.
+     * 지우개 판정과 편집 상자에 같은 값을 쓴다.
+     */
+    fun textBounds(el: DrawElement, paint: Paint): RectF {
+        val lines = textLines(el.text)
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.textSize = el.width
+        var widest = 0f
+        for (line in lines) widest = max(widest, paint.measureText(line))
+        val lineHeight = el.width * TEXT_LINE_SPACING
+        val anchor = el.points.firstOrNull() ?: Pt(0f, 0f)
+        return RectF(
+            anchor.x,
+            anchor.y,
+            anchor.x + max(widest, el.width * 0.4f),
+            anchor.y + max(lines.size, 1) * lineHeight
+        )
+    }
+
+    /** 글자 한 줄씩의 영역 (지우개가 빈 여백을 건드리지 않게) */
+    fun textLineRects(el: DrawElement, paint: Paint): List<RectF> {
+        val lines = textLines(el.text)
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.textSize = el.width
+        val lineHeight = el.width * TEXT_LINE_SPACING
+        val anchor = el.points.firstOrNull() ?: Pt(0f, 0f)
+        return lines.mapIndexed { i, line ->
+            RectF(
+                anchor.x,
+                anchor.y + i * lineHeight,
+                anchor.x + max(paint.measureText(line), el.width * 0.3f),
+                anchor.y + (i + 1) * lineHeight
+            )
+        }
+    }
 
     fun buildPath(el: DrawElement, path: Path) {
         path.reset()
         val pts = el.points
         if (pts.isEmpty()) return
         when (el.kind) {
-            ElementKind.LINE, ElementKind.ARROW -> {
+            ElementKind.LINE, ElementKind.DASHED_LINE -> {
                 path.moveTo(pts.first().x, pts.first().y)
                 path.lineTo(pts.last().x, pts.last().y)
             }
 
             ElementKind.RECT -> path.addRect(rectOf(pts.first(), pts.last()), Path.Direction.CW)
             ElementKind.OVAL -> path.addOval(rectOf(pts.first(), pts.last()), Path.Direction.CW)
+            ElementKind.TRIANGLE -> buildTriangle(rectOf(pts.first(), pts.last()), path)
+            ElementKind.COVER -> path.addRect(rectOf(pts.first(), pts.last()), Path.Direction.CW)
+            ElementKind.TEXT -> Unit
             else -> {
                 path.moveTo(pts[0].x, pts[0].y)
                 when (pts.size) {
@@ -230,6 +294,19 @@ object PagePainter {
 
     fun drawElement(canvas: Canvas, el: DrawElement, paint: Paint) {
         if (el.points.isEmpty()) return
+        when (el.kind) {
+            ElementKind.COVER -> {
+                drawCover(canvas, el, paint)
+                return
+            }
+
+            ElementKind.TEXT -> {
+                drawText(canvas, el, paint)
+                return
+            }
+
+            else -> Unit
+        }
         if (el.hasPressure) {
             drawPressureElement(canvas, el, paint)
             return
@@ -247,10 +324,42 @@ object PagePainter {
         paint.strokeWidth = el.width
         paint.color = el.color
         if (el.kind == ElementKind.HIGHLIGHTER) paint.alpha = HIGHLIGHTER_ALPHA
+        if (el.kind == ElementKind.DASHED_LINE) {
+            paint.pathEffect = DashPathEffect(
+                floatArrayOf(max(el.width * 2.6f, 9f), max(el.width * 2f, 7f)),
+                0f
+            )
+        }
         canvas.drawPath(path, paint)
+        paint.pathEffect = null
+    }
 
-        if (el.kind == ElementKind.ARROW) {
-            drawArrowHead(canvas, el, paint)
+    /**
+     * 덮개 떡메모지: 아래(배경·먼저 쓴 필기)를 완전히 가리는 불투명 흰 사각형.
+     * 그래서 이 요소 뒤에 그려진 것은 가려지고, 이 뒤에 새로 쓴 필기는 위에 보인다.
+     */
+    private fun drawCover(canvas: Canvas, el: DrawElement, paint: Paint) {
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.color = COVER_COLOR
+        canvas.drawRect(rectOf(el.points.first(), el.points.last()), paint)
+    }
+
+    /** 글자: 배경·테두리 없이 선택한 색과 크기로 글자만 그린다. */
+    private fun drawText(canvas: Canvas, el: DrawElement, paint: Paint) {
+        if (el.text.isEmpty()) return
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.FILL
+        paint.color = el.color
+        paint.textSize = el.width
+        val anchor = el.points.first()
+        val lineHeight = el.width * TEXT_LINE_SPACING
+        var baseline = anchor.y + el.width * 0.92f
+        for (line in textLines(el.text)) {
+            canvas.drawText(line, anchor.x, baseline, paint)
+            baseline += lineHeight
         }
     }
 
@@ -266,27 +375,6 @@ object PagePainter {
         paint.color = el.color
         if (el.kind == ElementKind.HIGHLIGHTER) paint.alpha = HIGHLIGHTER_ALPHA
         canvas.drawPath(path, paint)
-    }
-
-    private fun drawArrowHead(canvas: Canvas, el: DrawElement, paint: Paint) {
-        val pts = el.points
-        if (pts.size < 2) return
-        val end = pts.last()
-        val prev = pts[pts.size - 2]
-        val dx = end.x - prev.x
-        val dy = end.y - prev.y
-        if (dx == 0f && dy == 0f) return
-        val angle = kotlin.math.atan2(dy, dx)
-        val headLength = max(el.width * 3.6f, 14f)
-        val spread = 0.5f
-        val a1 = angle - spread
-        val a2 = angle + spread
-        val head = Path()
-        head.moveTo(end.x, end.y)
-        head.lineTo(end.x - headLength * cos(a1), end.y - headLength * sin(a1))
-        head.moveTo(end.x, end.y)
-        head.lineTo(end.x - headLength * cos(a2), end.y - headLength * sin(a2))
-        canvas.drawPath(head, paint)
     }
 
     fun drawNotes(canvas: Canvas, notes: List<StickyNote>, paint: Paint) {

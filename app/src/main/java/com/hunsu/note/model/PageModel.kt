@@ -3,13 +3,36 @@ package com.hunsu.note.model
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.RectF
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
-/** 현재 선택된 판서 도구 */
-enum class Tool { PEN, HIGHLIGHTER, ERASER, ERASER_PARTIAL, LINE, ARROW, RECT, OVAL, HAND }
+/**
+ * 현재 선택된 판서 도구.
+ *
+ * 3.4 에서 '이동/줌(HAND)' 도구를 없앴다 — 화면 이동·확대는 손가락 두 개(핀치·팬)로만 한다.
+ * 화살표(반직선) 도구 자리에는 점선 직선(DASHED_LINE)이 들어갔고,
+ * 도형에 삼각형(TRIANGLE), 새 도구로 덮개 떡메모지(COVER)와 글자(TEXT)가 붙었다.
+ * NOTE 는 포스트잇 — 캔버스에서 사각형을 그려 놓는다.
+ */
+enum class Tool {
+    PEN,
+    HIGHLIGHTER,
+    ERASER,
+    ERASER_PARTIAL,
+    LINE,
+    DASHED_LINE,
+    RECT,
+    OVAL,
+    TRIANGLE,
+    COVER,
+    TEXT,
+    NOTE
+}
 
 /** 페이지에 실제로 저장되는 요소의 종류 */
-enum class ElementKind { STROKE, HIGHLIGHTER, LINE, ARROW, RECT, OVAL }
+enum class ElementKind { STROKE, HIGHLIGHTER, LINE, DASHED_LINE, RECT, OVAL, TRIANGLE, COVER, TEXT }
 
 data class Pt(val x: Float, val y: Float)
 
@@ -23,15 +46,16 @@ class DrawElement(
     val color: Int,
     val width: Float,
     val points: MutableList<Pt>,
-    val pressures: MutableList<Float> = ArrayList()
+    val pressures: MutableList<Float> = ArrayList(),
+    /** 글자(TEXT) 요소의 내용. 다른 요소에서는 빈 문자열이다. */
+    var text: String = ""
 ) {
     /** 계산된 Path 캐시 (지우개/이동으로 목록이 바뀌면 무효화) */
     var cachedPath: Path? = null
 
     /** 필압으로 굵기가 달라지는 선인지 */
     val hasPressure: Boolean
-        get() = kind != ElementKind.LINE && kind != ElementKind.ARROW &&
-            kind != ElementKind.RECT && kind != ElementKind.OVAL &&
+        get() = (kind == ElementKind.STROKE || kind == ElementKind.HIGHLIGHTER) &&
             pressures.size == points.size && points.size > 1
 
     fun deepCopy(): DrawElement = DrawElement(
@@ -39,7 +63,8 @@ class DrawElement(
         color,
         width,
         points.map { Pt(it.x, it.y) }.toMutableList(),
-        ArrayList(pressures)
+        ArrayList(pressures),
+        text
     )
 
     /** 필압은 가장 얇을 때 기본 굵기의 35% 까지만 줄어든다. */
@@ -127,10 +152,17 @@ object StrokeWidths {
     val PEN = floatArrayOf(1.5f, 3f, 5f, 8f, 13f, 22f)
     val HIGHLIGHTER = floatArrayOf(8f, 14f, 20f, 28f, 38f, 52f)
 
+    /** 글자 크기 단계 (노트 world 좌표 기준) */
+    val TEXT = floatArrayOf(26f, 36f, 50f, 68f, 90f, 120f)
+
     const val MIN_WIDTH = 0.5f
     const val MAX_WIDTH = 48f
 
-    fun of(tool: Tool): FloatArray = if (tool == Tool.HIGHLIGHTER) HIGHLIGHTER else PEN
+    fun of(tool: Tool): FloatArray = when (tool) {
+        Tool.HIGHLIGHTER -> HIGHLIGHTER
+        Tool.TEXT -> TEXT
+        else -> PEN
+    }
 
     /** 버튼에 표시할 짧은 이름 */
     fun label(width: Float): String =
@@ -157,9 +189,42 @@ class StickyNote(
     var text: String,
     var x: Float,
     var y: Float,
-    var width: Float = 340f,
-    var height: Float = 280f
+    var width: Float = StickyGeometry.DEFAULT_WIDTH,
+    var height: Float = StickyGeometry.DEFAULT_HEIGHT
 )
+
+/**
+ * 포스트잇을 캔버스에서 사각형을 그려 놓을 때의 계산.
+ * 드래그한 사각형을 그대로 쓰고, 너무 작게(탭만) 그렸으면 기본 크기로 놓는다.
+ */
+object StickyGeometry {
+
+    const val DEFAULT_WIDTH = 340f
+    const val DEFAULT_HEIGHT = 280f
+    const val MIN_WIDTH = 140f
+    const val MIN_HEIGHT = 110f
+
+    /** 놓을 사각형의 폭·높이가 이보다 작으면 탭으로 본다. */
+    const val TAP_SLOP = 24f
+
+    fun fromDrag(x0: Float, y0: Float, x1: Float, y1: Float): StickyNote {
+        val left = min(x0, x1)
+        val top = min(y0, y1)
+        val w = abs(x1 - x0)
+        val h = abs(y1 - y0)
+        if (w < TAP_SLOP && h < TAP_SLOP) {
+            // 탭만 했으면 누른 자리를 가운데로 기본 크기 포스트잇을 놓는다.
+            return StickyNote(
+                "",
+                left - DEFAULT_WIDTH / 2f,
+                top - DEFAULT_HEIGHT / 2f,
+                DEFAULT_WIDTH,
+                DEFAULT_HEIGHT
+            )
+        }
+        return StickyNote("", left, top, max(w, MIN_WIDTH), max(h, MIN_HEIGHT))
+    }
+}
 
 /**
  * 한 페이지. 넓은 노트 캔버스(worldWidth x worldHeight)와 그 위에 얹힌

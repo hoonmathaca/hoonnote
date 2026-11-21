@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -20,14 +21,16 @@ import kotlin.math.sqrt
 
 /**
  * 판서 캔버스.
- * - 한 손가락(또는 스타일러스): 그리기 (손 도구일 때는 이동)
- * - 두 손가락: 확대/축소 + 이동(팬)
+ * - 한 손가락(또는 스타일러스): 그리기
+ * - 두 손가락: 확대/축소 + 이동(팬) — 3.4 부터 화면 이동은 이 제스처만 쓴다.
  * - 좌표계: 노트 world 좌표(예: 2560 x 1440), 화면에는 scale/offset 으로 변환
  *
  * 지우개는 두 종류다.
  * - Tool.ERASER: 문지른 곳에 걸린 획을 통째로 지운다(선 전체 지우개).
  * - Tool.ERASER_PARTIAL: 문지른 부분만 잘라낸다(부분 지우개). 한 획이 두 동강 나면
  *   남은 조각들이 각각의 획으로 다시 만들어진다.
+ * 덮개 떡메모지(COVER)·글자(TEXT)는 조각내지 않고 통째로 지운다. 덮개는 이름자로 문질러도
+ * 지워지지 않도록 테두리 가까이를 문지를 때만 지운다(위에 쓴 필기를 지우다 덮개가 사라지는 일 방지).
  */
 class InkCanvasView @JvmOverloads constructor(
     context: Context,
@@ -69,6 +72,12 @@ class InkCanvasView @JvmOverloads constructor(
     var onPageEdited: (() -> Unit)? = null
     var onStrokeStarted: (() -> Unit)? = null
 
+    /** 포스트잇 도구로 사각형을 그렸을 때 (world 좌표). */
+    var onNoteRect: ((Float, Float, Float, Float) -> Unit)? = null
+
+    /** 글자 도구로 캔버스를 눌렀을 때 (world 좌표). */
+    var onTextTap: ((Float, Float) -> Unit)? = null
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var mode = MODE_NONE
@@ -80,8 +89,12 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastMidX = 0f
     private var lastMidY = 0f
     private var lastDistance = 0f
-    private var lastPanX = 0f
-    private var lastPanY = 0f
+
+    /** 포스트잇·글자 도구의 시작점 (world 좌표) */
+    private var startWorldX = 0f
+    private var startWorldY = 0f
+    private var lastWorldX = 0f
+    private var lastWorldY = 0f
 
     companion object {
         private const val MODE_NONE = 0
@@ -89,10 +102,17 @@ class InkCanvasView @JvmOverloads constructor(
         private const val MODE_ERASE = 2
         private const val MODE_ERASE_PARTIAL = 3
         private const val MODE_GESTURE = 4
-        private const val MODE_PAN = 5
+        private const val MODE_NOTE = 6
+        private const val MODE_TEXT = 7
 
         private const val MIN_STROKE_STEP = 0.7f
         private const val ERASE_EXTRA = 14f
+
+        /** 글자 도구는 이 안에서 손을 떼면 그 자리에 글자를 넣는다 (world 좌표) */
+        private const val TEXT_TAP_SLOP = 24f
+
+        /** 미리보기 점선 색 (하늘색 계열) */
+        private const val PREVIEW_COLOR = 0xFF29B6F6.toInt()
     }
 
     init {
@@ -175,8 +195,24 @@ class InkCanvasView @JvmOverloads constructor(
 
         // 그리는 중인 요소 미리보기
         current?.let { PagePainter.drawElement(canvas, it, paint) }
+        if (mode == MODE_NOTE) drawNotePreview(canvas)
 
         canvas.restore()
+    }
+
+    /** 포스트잇을 그리는 중의 점선 미리보기 사각형. */
+    private fun drawNotePreview(canvas: Canvas) {
+        paint.reset()
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f / scale.coerceAtLeast(0.0001f)
+        paint.color = PREVIEW_COLOR
+        paint.pathEffect = DashPathEffect(
+            floatArrayOf(9f / scale.coerceAtLeast(0.0001f), 7f / scale.coerceAtLeast(0.0001f)), 0f
+        )
+        val r = PagePainter.rectOf(Pt(startWorldX, startWorldY), Pt(lastWorldX, lastWorldY))
+        canvas.drawRect(r, paint)
+        paint.pathEffect = null
     }
 
     // ---------------------------------------------------------------- 터치
@@ -187,17 +223,25 @@ class InkCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 mode = MODE_NONE
-                if (tool == Tool.HAND) {
-                    mode = MODE_PAN
-                    lastPanX = event.x
-                    lastPanY = event.y
-                    return true
-                }
-                if (!canStartStroke(event.getToolType(0))) return true
                 val wx = screenToWorldX(event.x)
                 val wy = screenToWorldY(event.y)
+                startWorldX = wx
+                startWorldY = wy
+                lastWorldX = wx
+                lastWorldY = wy
+                if (!canStartStroke(event.getToolType(0))) return true
                 erasePushed = false
                 when (tool) {
+                    Tool.NOTE -> {
+                        // 사각형을 그려 포스트잇을 놓는 중
+                        mode = MODE_NOTE
+                        invalidate()
+                    }
+
+                    Tool.TEXT -> {
+                        mode = MODE_TEXT
+                    }
+
                     Tool.ERASER -> {
                         mode = MODE_ERASE
                         eraseAt(wx, wy)
@@ -231,18 +275,14 @@ class InkCanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 when (mode) {
-                    MODE_PAN -> {
-                        if (event.pointerCount > 0) {
-                            offsetX += event.getX(0) - lastPanX
-                            offsetY += event.getY(0) - lastPanY
-                            lastPanX = event.getX(0)
-                            lastPanY = event.getY(0)
-                            invalidate()
-                            onTransformChanged?.invoke()
-                        }
+                    MODE_GESTURE -> updateGesture(event)
+
+                    MODE_NOTE -> {
+                        lastWorldX = screenToWorldX(event.x)
+                        lastWorldY = screenToWorldY(event.y)
+                        invalidate()
                     }
 
-                    MODE_GESTURE -> updateGesture(event)
                     MODE_DRAW -> {
                         extendCurrent(event)
                         invalidate()
@@ -268,7 +308,27 @@ class InkCanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
-                if (mode == MODE_DRAW) finishCurrent()
+                val wx = screenToWorldX(event.x)
+                val wy = screenToWorldY(event.y)
+                when (mode) {
+                    MODE_DRAW -> finishCurrent()
+                    MODE_NOTE -> {
+                        lastWorldX = wx
+                        lastWorldY = wy
+                        val handler = onNoteRect
+                        invalidate()
+                        handler?.invoke(startWorldX, startWorldY, wx, wy)
+                    }
+
+                    MODE_TEXT -> {
+                        // 손을 크게 움직이지 않고 누른 자리에 글자를 넣는다.
+                        val dx = wx - startWorldX
+                        val dy = wy - startWorldY
+                        if (sqrt(dx * dx + dy * dy) <= TEXT_TAP_SLOP) {
+                            onTextTap?.invoke(startWorldX, startWorldY)
+                        }
+                    }
+                }
                 mode = MODE_NONE
                 lastDistance = 0f
             }
@@ -311,14 +371,17 @@ class InkCanvasView @JvmOverloads constructor(
             Tool.PEN -> ElementKind.STROKE
             Tool.HIGHLIGHTER -> ElementKind.HIGHLIGHTER
             Tool.LINE -> ElementKind.LINE
-            Tool.ARROW -> ElementKind.ARROW
+            Tool.DASHED_LINE -> ElementKind.DASHED_LINE
             Tool.RECT -> ElementKind.RECT
             Tool.OVAL -> ElementKind.OVAL
-            Tool.ERASER, Tool.ERASER_PARTIAL, Tool.HAND -> ElementKind.STROKE
+            Tool.TRIANGLE -> ElementKind.TRIANGLE
+            Tool.COVER -> ElementKind.COVER
+            Tool.ERASER, Tool.ERASER_PARTIAL, Tool.NOTE, Tool.TEXT -> ElementKind.STROKE
         }
         val width = when (kind) {
             ElementKind.HIGHLIGHTER -> max(penWidth, 6f)
             ElementKind.STROKE -> penWidth
+            ElementKind.COVER -> 2f
             else -> max(penWidth, 2f)
         }
         val points = ArrayList<Pt>()
@@ -378,7 +441,7 @@ class InkCanvasView @JvmOverloads constructor(
         val el = current ?: return
         current = null
         val p = page ?: return
-        if (PagePainter.isShape(el.kind)) {
+        if (PagePainter.isAtomic(el.kind)) {
             val a = el.points.first()
             val b = el.points.last()
             val dx = a.x - b.x
@@ -494,7 +557,7 @@ class InkCanvasView @JvmOverloads constructor(
         val added = ArrayList<DrawElement>()
 
         for (el in p.elements) {
-            if (PagePainter.isShape(el.kind)) {
+            if (PagePainter.isAtomic(el.kind)) {
                 if (hitTest(el, x, y)) removed.add(el)
                 continue
             }
@@ -568,9 +631,11 @@ class InkCanvasView @JvmOverloads constructor(
         val pts = el.points
         if (pts.isEmpty()) return false
         return when (el.kind) {
-            ElementKind.LINE, ElementKind.ARROW -> distToSegment(x, y, pts.first(), pts.last()) <= threshold
+            ElementKind.LINE, ElementKind.DASHED_LINE ->
+                distToSegment(x, y, pts.first(), pts.last()) <= threshold
 
-            ElementKind.RECT -> {
+            ElementKind.RECT, ElementKind.COVER -> {
+                // 덮개는 이름자로 문질러도 지워지지 않게 테두리 가까이를 문지를 때만 잡힌다.
                 val r = PagePainter.rectOf(pts.first(), pts.last())
                 val inX = x >= r.left - threshold && x <= r.right + threshold
                 val inY = y >= r.top - threshold && y <= r.bottom + threshold
@@ -591,6 +656,25 @@ class InkCanvasView @JvmOverloads constructor(
                     val value = sqrt(nx * nx + ny * ny)
                     abs(value - 1f) * min(rx, ry) <= threshold
                 }
+            }
+
+            ElementKind.TRIANGLE -> {
+                val r = PagePainter.rectOf(pts.first(), pts.last())
+                val apex = Pt(r.centerX(), r.top)
+                val right = Pt(r.right, r.bottom)
+                val left = Pt(r.left, r.bottom)
+                distToSegment(x, y, apex, right) <= threshold ||
+                    distToSegment(x, y, right, left) <= threshold ||
+                    distToSegment(x, y, left, apex) <= threshold
+            }
+
+            ElementKind.TEXT -> {
+                for (line in PagePainter.textLineRects(el, paint)) {
+                    if (x >= line.left - threshold && x <= line.right + threshold &&
+                        y >= line.top - threshold && y <= line.bottom + threshold
+                    ) return true
+                }
+                false
             }
 
             else -> {

@@ -294,12 +294,12 @@
                         android:src="@drawable/ic_line" />
 
                     <ImageButton
-                        android:id="@+id/btnArrow"
+                        android:id="@+id/btnDashed"
                         style="@style/Widget.HunsuNote.IconButton"
                         android:layout_width="40dp"
                         android:layout_height="40dp"
-                        android:contentDescription="@string/tool_arrow"
-                        android:src="@drawable/ic_arrow" />
+                        android:contentDescription="@string/tool_dashed_line"
+                        android:src="@drawable/ic_dashed" />
 
                     <ImageButton
                         android:id="@+id/btnRect"
@@ -316,6 +316,30 @@
                         android:layout_height="40dp"
                         android:contentDescription="@string/tool_oval"
                         android:src="@drawable/ic_oval" />
+
+                    <ImageButton
+                        android:id="@+id/btnTriangle"
+                        style="@style/Widget.HunsuNote.IconButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:contentDescription="@string/tool_triangle"
+                        android:src="@drawable/ic_triangle" />
+
+                    <ImageButton
+                        android:id="@+id/btnCover"
+                        style="@style/Widget.HunsuNote.IconButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:contentDescription="@string/tool_cover"
+                        android:src="@drawable/ic_cover" />
+
+                    <ImageButton
+                        android:id="@+id/btnText"
+                        style="@style/Widget.HunsuNote.IconButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:contentDescription="@string/tool_text"
+                        android:src="@drawable/ic_text" />
 
                     <ImageButton
                         android:id="@+id/btnNote"
@@ -340,14 +364,6 @@
                         android:layout_height="40dp"
                         android:contentDescription="@string/tool_eraser_partial"
                         android:src="@drawable/ic_eraser_partial" />
-
-                    <ImageButton
-                        android:id="@+id/btnHand"
-                        style="@style/Widget.HunsuNote.IconButton"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:contentDescription="@string/tool_hand"
-                        android:src="@drawable/ic_move" />
 
                     <ImageButton
                         android:id="@+id/btnUndo"

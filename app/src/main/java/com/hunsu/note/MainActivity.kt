@@ -53,9 +53,13 @@ import com.hunsu.note.io.PdfPageProvider
 import com.hunsu.note.io.PdfPageSource
 import com.hunsu.note.io.PdfPages
 import com.hunsu.note.model.BackgroundStyle
+import com.hunsu.note.model.DrawElement
+import com.hunsu.note.model.ElementKind
 import com.hunsu.note.model.Lecture
 import com.hunsu.note.model.NoteLayout
 import com.hunsu.note.model.Page
+import com.hunsu.note.model.Pt
+import com.hunsu.note.model.StickyGeometry
 import com.hunsu.note.model.StickyNote
 import com.hunsu.note.model.StrokeWidths
 import com.hunsu.note.model.Tool
@@ -101,6 +105,9 @@ class MainActivity : AppCompatActivity() {
     private var penWidth = Prefs.defaultPenWidth
     private var highlighterColor = Prefs.DEFAULT_HIGHLIGHTER_COLOR
     private var highlighterWidth = 20f
+
+    /** 글자 도구의 글자 크기 (노트 world 좌표) */
+    private var textSize = StrokeWidths.TEXT[2]
     private var penTouchedByUser = false
     private var immersive = false
     private var pendingMic = true
@@ -286,6 +293,8 @@ class MainActivity : AppCompatActivity() {
             fingerDrawingAllowed = Prefs.palmMode == Prefs.PALM_FINGER
             onPageEdited = { markCurrentPageDirty() }
             onTransformChanged = { layoutNotes() }
+            onNoteRect = { x0, y0, x1, y1 -> addStickyNote(x0, y0, x1, y1) }
+            onTextTap = { x, y -> promptForText(x, y) }
         }
     }
 
@@ -316,18 +325,23 @@ class MainActivity : AppCompatActivity() {
             binding.btnPen to Tool.PEN,
             binding.btnHighlighter to Tool.HIGHLIGHTER,
             binding.btnLine to Tool.LINE,
-            binding.btnArrow to Tool.ARROW,
+            binding.btnDashed to Tool.DASHED_LINE,
             binding.btnRect to Tool.RECT,
             binding.btnOval to Tool.OVAL,
+            binding.btnTriangle to Tool.TRIANGLE,
+            binding.btnCover to Tool.COVER,
+            binding.btnText to Tool.TEXT,
+            binding.btnNote to Tool.NOTE,
             binding.btnEraser to Tool.ERASER,
-            binding.btnEraserPartial to Tool.ERASER_PARTIAL,
-            binding.btnHand to Tool.HAND
+            binding.btnEraserPartial to Tool.ERASER_PARTIAL
         )
         toolButtons = buttons
         for ((button, tool) in buttons) {
-            button.setOnClickListener { selectTool(tool) }
+            button.setOnClickListener {
+                selectTool(tool)
+                if (tool == Tool.NOTE) toast(getString(R.string.sticky_draw_hint))
+            }
         }
-        binding.btnNote.setOnClickListener { addStickyNote() }
         binding.btnUndo.setOnClickListener {
             if (binding.canvasView.undo()) markCurrentPageDirty()
         }
@@ -351,8 +365,11 @@ class MainActivity : AppCompatActivity() {
     private fun currentStrokeColor(): Int =
         if (isHighlighterActive()) highlighterColor else penColor
 
-    private fun currentStrokeWidth(): Float =
-        if (isHighlighterActive()) highlighterWidth else penWidth
+    private fun currentStrokeWidth(): Float = when {
+        isHighlighterActive() -> highlighterWidth
+        currentTool() == Tool.TEXT -> textSize
+        else -> penWidth
+    }
 
     /** 도구에 맞는 색을 캔버스에 적용한다. */
     private fun applyCurrentToolStyle() {
@@ -417,7 +434,7 @@ class MainActivity : AppCompatActivity() {
         binding.canvasView.penColor = color
         refreshColorDots()
         val current = currentTool()
-        if (current == Tool.ERASER || current == Tool.ERASER_PARTIAL || current == Tool.HAND) {
+        if (current == Tool.ERASER || current == Tool.ERASER_PARTIAL) {
             selectTool(Tool.PEN)
         }
     }
@@ -426,12 +443,14 @@ class MainActivity : AppCompatActivity() {
         if (isHighlighterActive()) {
             highlighterWidth = width
             Prefs.highlighterWidth = width
+        } else if (currentTool() == Tool.TEXT) {
+            textSize = width
         } else {
             penWidth = width
             penTouchedByUser = true
             Prefs.penWidth = width
         }
-        binding.canvasView.penWidth = width
+        binding.canvasView.penWidth = currentStrokeWidth()
         binding.canvasView.invalidate()
         refreshWidthButtons()
     }
@@ -1522,11 +1541,13 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- 포스트잇
 
-    private fun addStickyNote() {
+    /**
+     * 포스트잇 도구로 캔버스에 그린 사각형 자리에 포스트잇을 놓는다.
+     * 탭만 했으면(너무 작으면) 누른 자리에 기본 크기로 놓는다.
+     */
+    private fun addStickyNote(x0: Float, y0: Float, x1: Float, y1: Float) {
         val page = lecture.currentPage ?: return
-        val cx = binding.canvasView.screenToWorldX(binding.stickyLayer.width / 2f)
-        val cy = binding.canvasView.screenToWorldY(binding.stickyLayer.height / 2f)
-        val note = StickyNote("", cx - 170f, cy - 140f, 340f, 280f)
+        val note = StickyGeometry.fromDrag(x0, y0, x1, y1)
         page.notes.add(note)
         addNoteView(page, note)
         dirtyPages.add(page)
@@ -1614,6 +1635,55 @@ class MainActivity : AppCompatActivity() {
         view.scaleY = note.height * scale / h
         view.translationX = canvas.offsetX + note.x * scale
         view.translationY = canvas.offsetY + note.y * scale
+    }
+
+    // ---------------------------------------------------------------- 글자
+
+    /**
+     * 글자 도구: 누른 자리에 글자를 입력해 넣는다.
+     * 배경·테두리 없이 지금 색과 글자 크기로 그려지고, Undo·페이지 전환에도 요소로 남는다.
+     */
+    private fun promptForText(x: Float, y: Float) {
+        val page = lecture.currentPage ?: return
+        val input = EditText(this).apply {
+            hint = getString(R.string.text_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setTextColor(penColor)
+            textSize = 16f
+            minLines = 2
+            gravity = Gravity.TOP or Gravity.START
+            setPadding(24, 16, 24, 16)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.text_title)
+            .setView(input)
+            .setNegativeButton(R.string.discard_cancel, null)
+            .setPositiveButton(R.string.text_ok) { _, _ ->
+                val value = input.text?.toString()?.trim()
+                if (!value.isNullOrEmpty()) {
+                    addTextElement(page, x, y, value)
+                }
+            }
+            .show()
+    }
+
+    /** 글자 요소를 지금 색·크기로 페이지에 넣는다. */
+    private fun addTextElement(page: Page, x: Float, y: Float, text: String) {
+        page.pushUndo()
+        page.elements.add(
+            DrawElement(
+                ElementKind.TEXT,
+                penColor,
+                textSize,
+                arrayListOf(Pt(x, y)),
+                ArrayList(),
+                text
+            )
+        )
+        binding.canvasView.invalidate()
+        markCurrentPageDirty()
     }
 
     // ---------------------------------------------------------------- 화면 / 바
