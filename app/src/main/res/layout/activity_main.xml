@@ -389,6 +389,15 @@
                     android:layout_marginBottom="4dp"
                     android:background="@color/divider" />
 
+                <TextView
+                    android:id="@+id/tvSizeLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="@string/stroke_width_label"
+                    android:textColor="#88FFFFFF"
+                    android:textSize="10sp" />
+
                 <GridLayout
                     android:id="@+id/widthGrid"
                     android:layout_width="match_parent"
@@ -396,6 +405,50 @@
                     android:columnCount="3"
                     android:gravity="center"
                     android:orientation="horizontal" />
+
+                <!-- 3.5: 떡메모지 도구일 때만 보이는 '테두리 있음 / 없음' 선택 -->
+                <LinearLayout
+                    android:id="@+id/coverBorderRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="@string/cover_border_label"
+                        android:textColor="#88FFFFFF"
+                        android:textSize="10sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/btnCoverBorderOn"
+                            android:layout_width="match_parent"
+                            android:layout_height="26dp"
+                            android:contentDescription="@string/cover_border_on"
+                            android:gravity="center"
+                            android:text="@string/cover_border_on"
+                            android:textColor="@color/tool_text"
+                            android:textSize="9.5sp" />
+
+                        <TextView
+                            android:id="@+id/btnCoverBorderOff"
+                            android:layout_width="match_parent"
+                            android:layout_height="26dp"
+                            android:contentDescription="@string/cover_border_off"
+                            android:gravity="center"
+                            android:text="@string/cover_border_off"
+                            android:textColor="@color/tool_text"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
 
                 <GridLayout
                     android:id="@+id/colorGrid"

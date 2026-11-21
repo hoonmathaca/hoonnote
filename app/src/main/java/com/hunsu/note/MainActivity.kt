@@ -26,6 +26,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
@@ -67,6 +68,7 @@ import com.hunsu.note.rec.RecSettings
 import com.hunsu.note.rec.RecordQuality
 import com.hunsu.note.rec.ScreenRecordService
 import com.hunsu.note.util.PageRange
+import com.hunsu.note.view.InlineTextEditor
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -108,6 +110,16 @@ class MainActivity : AppCompatActivity() {
 
     /** 글자 도구의 글자 크기 (노트 world 좌표) */
     private var textSize = StrokeWidths.TEXT[2]
+
+    /** 3.5: 새로 그리는 덮개 떡메모지에 얇은 테두리를 둘지 (기본은 없음 = 순수 흰 면) */
+    private var coverBordered = false
+
+    /** 3.5: 팝업 없이 캔버스 그 자리에서 받는 글자 입력기 */
+    private var inlineText: InlineTextEditor? = null
+
+    /** 인라인 입력을 시작한 페이지 (확정할 때 그 페이지에 요소를 넣는다) */
+    private var inlineTextPage: Page? = null
+
     private var penTouchedByUser = false
     private var immersive = false
     private var pendingMic = true
@@ -215,6 +227,7 @@ class MainActivity : AppCompatActivity() {
         penWidth = Prefs.penWidth
         highlighterColor = Prefs.highlighterColor
         highlighterWidth = Prefs.highlighterWidth
+        coverBordered = Prefs.coverBorder
         lastAlign = Prefs.noteAlign
         lastMargin = Prefs.noteMargin
 
@@ -222,10 +235,11 @@ class MainActivity : AppCompatActivity() {
         setupMenus()
         setupToolRail()
         setupBars()
+        setupCoverBorderChips()
         refreshPalette()
         refreshWidthButtons()
 
-        onBackPressedDispatcher.addCallback(this) { confirmExit() }
+        onBackPressedDispatcher.addCallback(this) { onBackPressedWithInputs() }
 
         startBlankLecture(BackgroundStyle.WHITE)
 
@@ -251,6 +265,12 @@ class MainActivity : AppCompatActivity() {
             // 이미 해제된 경우
         }
         super.onStop()
+    }
+
+    override fun onPause() {
+        // 화면을 벗어날 때 입력 중이던 글자는 잃지 않고 확정한다.
+        commitInlineText()
+        super.onPause()
     }
 
     override fun onResume() {
@@ -286,27 +306,62 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- 초기 설정
 
     private fun setupCanvas() {
+        inlineText = InlineTextEditor(binding.boardArea, binding.canvasView).apply {
+            onCommit = { x, y, text ->
+                val page = inlineTextPage ?: lecture.currentPage
+                inlineTextPage = null
+                if (page != null) addTextElement(page, x, y, text)
+            }
+        }
         binding.canvasView.apply {
             penColor = this@MainActivity.penColor
             penWidth = this@MainActivity.penWidth
             pressureEnabled = Prefs.pressureEnabled
             fingerDrawingAllowed = Prefs.palmMode == Prefs.PALM_FINGER
+            coverBorder = coverBordered
             onPageEdited = { markCurrentPageDirty() }
             onTransformChanged = { layoutNotes() }
             onNoteRect = { x0, y0, x1, y1 -> addStickyNote(x0, y0, x1, y1) }
-            onTextTap = { x, y -> promptForText(x, y) }
+            onTextTap = { x, y -> startInlineText(x, y) }
+            onCanvasTouchDown = {
+                // 캔버스 바깥(다른 곳)을 누르면 글자 입력은 확정, 포스트잇 커서는 사라진다.
+                commitInlineText()
+                clearStickyFocus()
+            }
         }
     }
 
     private fun setupMenus() {
-        binding.btnMenuLecture.setOnClickListener { showLectureMenu(it) }
-        binding.btnMenuSave.setOnClickListener { showSaveMenu(it) }
-        binding.btnMenuPage.setOnClickListener { showPageMenu(it) }
-        binding.btnMenuScreen.setOnClickListener { showScreenMenu(it) }
-        binding.btnMenuRecord.setOnClickListener { showRecordMenu(it) }
+        binding.btnMenuLecture.setOnClickListener {
+            commitInputs()
+            showLectureMenu(it)
+        }
+        binding.btnMenuSave.setOnClickListener {
+            commitInputs()
+            showSaveMenu(it)
+        }
+        binding.btnMenuPage.setOnClickListener {
+            commitInputs()
+            showPageMenu(it)
+        }
+        binding.btnMenuScreen.setOnClickListener {
+            commitInputs()
+            showScreenMenu(it)
+        }
+        binding.btnMenuRecord.setOnClickListener {
+            commitInputs()
+            showRecordMenu(it)
+        }
         binding.btnMenuSettings.setOnClickListener {
+            commitInputs()
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+    }
+
+    /** 3.5: 메뉴·도구를 건드리기 전에 입력 중인 글자를 확정하고 포스트잇 커서를 닫는다. */
+    private fun commitInputs() {
+        commitInlineText()
+        clearStickyFocus()
     }
 
     private fun setupBars() {
@@ -343,9 +398,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.btnUndo.setOnClickListener {
+            commitInputs()
             if (binding.canvasView.undo()) markCurrentPageDirty()
         }
         binding.btnRedo.setOnClickListener {
+            commitInputs()
             if (binding.canvasView.redo()) markCurrentPageDirty()
         }
 
@@ -432,6 +489,8 @@ class MainActivity : AppCompatActivity() {
             Prefs.penColor = color
         }
         binding.canvasView.penColor = color
+        // 입력 중인 글자의 색도 바로 바뀌게 한다.
+        inlineText?.setStyle(penColor, textSize)
         refreshColorDots()
         val current = currentTool()
         if (current == Tool.ERASER || current == Tool.ERASER_PARTIAL) {
@@ -452,12 +511,20 @@ class MainActivity : AppCompatActivity() {
         }
         binding.canvasView.penWidth = currentStrokeWidth()
         binding.canvasView.invalidate()
+        // 입력 중인 글자의 크기도 그 자리에서 바로 바뀌게 한다.
+        inlineText?.setStyle(penColor, textSize)
         refreshWidthButtons()
     }
 
     /** 굵기 단계 버튼을 지금 도구의 단계에 맞춰 다시 만든다. */
     private fun refreshWidthButtons() {
         val grid = binding.widthGrid ?: return
+        // 글자 도구일 때는 같은 칩이 '글자 크기' 단계가 된다는 것을 알려 준다.
+        binding.tvSizeLabel.text = when (currentTool()) {
+            Tool.TEXT -> getString(R.string.text_size_label)
+            Tool.HIGHLIGHTER -> getString(R.string.highlighter_width_label)
+            else -> getString(R.string.stroke_width_label)
+        }
         val values = StrokeWidths.of(currentTool())
         val active = currentStrokeWidth()
         val density = resources.displayMetrics.density
@@ -505,6 +572,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectTool(tool: Tool) {
+        commitInputs()
         binding.canvasView.tool = tool
         val on = ContextCompat.getColor(this, R.color.tool_text_selected)
         val off = ContextCompat.getColor(this, R.color.tool_text)
@@ -514,9 +582,15 @@ class MainActivity : AppCompatActivity() {
             button.backgroundTintList =
                 ColorStateList.valueOf(if (selected) 0x33FFFFFF else 0x00000000)
         }
+        // 떡메모지일 때는 '테두리 있음/없음' 선택을 보이고, 굵기 칩은 숨긴다.
+        val isCover = tool == Tool.COVER
+        binding.coverBorderRow.visibility = if (isCover) View.VISIBLE else View.GONE
+        binding.widthGrid.visibility = if (isCover) View.GONE else View.VISIBLE
+        binding.tvSizeLabel.visibility = if (isCover) View.GONE else View.VISIBLE
         applyCurrentToolStyle()
         refreshPalette()
         refreshWidthButtons()
+        refreshCoverBorderChips()
     }
 
     // ---------------------------------------------------------------- 상단 메뉴
@@ -801,6 +875,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPage() {
+        // 페이지를 옮기기 전에 입력 중인 글자는 지금 페이지에 확정한다.
+        commitInlineText()
+        clearStickyFocus()
         val page = lecture.currentPage
         if (page == null) {
             binding.canvasView.setPage(null, null)
@@ -1375,6 +1452,21 @@ class MainActivity : AppCompatActivity() {
     /** 테스트용: 페이지 이동 */
     internal fun goToPageForTest(index: Int) = goToPage(index)
 
+    /** 테스트용: 지금 떠 있는 글자 인라인 입력창(없으면 null) */
+    internal fun inlineTextEditorForTest(): EditText? = inlineText?.editor
+
+    /** 테스트용: 지금 새로 그리는 떡메모지의 테두리 선택 상태 */
+    internal fun coverBorderedForTest(): Boolean = coverBordered
+
+    /** 테스트용: 입력 중인 글자를 확정 */
+    internal fun commitInlineTextForTest() = commitInlineText()
+
+    /** 테스트용: 캔버스 바깥을 눌렀을 때와 같은 입력 정리 */
+    internal fun clearInputsForTest() {
+        commitInlineText()
+        clearStickyFocus()
+    }
+
     /** 상단 메뉴에서 PDF 페이지를 90도 단위로 돌린다. */
     private fun showRotationDialog() {
         if (lecture.pages.none { it.pdfPageIndex >= 0 }) {
@@ -1578,6 +1670,14 @@ class MainActivity : AppCompatActivity() {
                 scheduleThumbRefresh(900)
             }
         })
+        // 3.5: 다른 곳을 누르면 커서(깜박임)를 닫고, 포스트잇을 다시 누르면 이어서 입력한다.
+        edit.setOnClickListener {
+            edit.requestFocus()
+            showKeyboard(edit)
+        }
+        edit.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) hideKeyboard(edit)
+        }
         view.findViewById<View>(R.id.stickyDelete).setOnClickListener {
             page.notes.remove(note)
             noteViews.remove(note)
@@ -1618,6 +1718,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun layoutNotes() {
         for ((note, view) in noteViews) layoutNote(view, note)
+        // 확대·이동을 해도 글자 입력창이 캔버스의 같은 지점에 남도록 함께 옮긴다.
+        inlineText?.updateTransform()
     }
 
     private fun layoutNote(view: View, note: StickyNote) {
@@ -1640,33 +1742,24 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- 글자
 
     /**
-     * 글자 도구: 누른 자리에 글자를 입력해 넣는다.
-     * 배경·테두리 없이 지금 색과 글자 크기로 그려지고, Undo·페이지 전환에도 요소로 남는다.
+     * 3.5 글자 도구: 팝업 대신 누른 자리에 투명 입력창이 바로 뜨고 키보드가 올라온다.
+     * 치는 글자가 그 자리에서 바로 보이고, 바깥을 누르면 그 위치에 글자 요소로 확정된다.
      */
-    private fun promptForText(x: Float, y: Float) {
+    private fun startInlineText(x: Float, y: Float) {
         val page = lecture.currentPage ?: return
-        val input = EditText(this).apply {
-            hint = getString(R.string.text_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            setTextColor(penColor)
-            textSize = 16f
-            minLines = 2
-            gravity = Gravity.TOP or Gravity.START
-            setPadding(24, 16, 24, 16)
+        clearStickyFocus()
+        inlineTextPage = page
+        inlineText?.start(x, y, penColor, textSize)
+    }
+
+    /** 입력 중인 글자를 지금 페이지에 확정한다(비어 있으면 아무것도 넣지 않는다). */
+    private fun commitInlineText() {
+        val editor = inlineText ?: return
+        if (!editor.isActive) {
+            inlineTextPage = null
+            return
         }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.text_title)
-            .setView(input)
-            .setNegativeButton(R.string.discard_cancel, null)
-            .setPositiveButton(R.string.text_ok) { _, _ ->
-                val value = input.text?.toString()?.trim()
-                if (!value.isNullOrEmpty()) {
-                    addTextElement(page, x, y, value)
-                }
-            }
-            .show()
+        editor.commit()
     }
 
     /** 글자 요소를 지금 색·크기로 페이지에 넣는다. */
@@ -1683,7 +1776,68 @@ class MainActivity : AppCompatActivity() {
             )
         )
         binding.canvasView.invalidate()
-        markCurrentPageDirty()
+        dirtyPages.add(page)
+        updateUndoRedo()
+        scheduleThumbRefresh(500)
+    }
+
+    // ---------------------------------------------------------------- 덮개 테두리 (3.5)
+
+    private fun setupCoverBorderChips() {
+        binding.btnCoverBorderOn.setOnClickListener { setCoverBordered(true) }
+        binding.btnCoverBorderOff.setOnClickListener { setCoverBordered(false) }
+        binding.canvasView.coverBorder = coverBordered
+        refreshCoverBorderChips()
+    }
+
+    /** 새로 그릴 덮개 떡메모지에 테두리를 둘지 고른다. */
+    private fun setCoverBordered(bordered: Boolean) {
+        coverBordered = bordered
+        Prefs.coverBorder = bordered
+        binding.canvasView.coverBorder = bordered
+        refreshCoverBorderChips()
+    }
+
+    private fun refreshCoverBorderChips() {
+        val on = ContextCompat.getColor(this, R.color.tool_text_selected)
+        val off = ContextCompat.getColor(this, R.color.tool_text)
+        val density = resources.displayMetrics.density
+        for ((chip, selected) in listOf(
+            binding.btnCoverBorderOn to coverBordered,
+            binding.btnCoverBorderOff to !coverBordered
+        )) {
+            chip.setTextColor(if (selected) on else off)
+            chip.background = GradientDrawable().apply {
+                cornerRadius = 5 * density
+                setColor(if (selected) 0x33FFFFFF else 0x00000000)
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- 포스트잇 커서
+
+    /**
+     * 캔버스 바깥을 누르면 포스트잇 입력 커서(깜박임)를 닫는다.
+     * 글자는 그대로 남고, 포스트잇을 다시 누르면 그 자리에서 이어 쓸 수 있다.
+     */
+    private fun clearStickyFocus() {
+        for (view in noteViews.values) {
+            val edit = view.findViewById<EditText>(R.id.stickyText) ?: continue
+            if (edit.hasFocus()) {
+                edit.clearFocus()
+                hideKeyboard(edit)
+            }
+        }
+    }
+
+    private fun showKeyboard(view: View) {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard(view: View) {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imm.hideSoftInputFromWindow(view.windowToken, 0)
     }
 
     // ---------------------------------------------------------------- 화면 / 바
@@ -1889,6 +2043,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------- 기타
+
+    /** 뒤로가기: 입력 중이면 먼저 확정해서 글자를 잃지 않게 한다. */
+    private fun onBackPressedWithInputs() {
+        if (inlineText?.isActive == true) {
+            commitInlineText()
+            return
+        }
+        confirmExit()
+    }
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

@@ -40,6 +40,9 @@ object Prefs {
     private const val KEY_NOTE_ALIGN = "note_align"
     private const val KEY_NOTE_MARGIN = "note_margin"
 
+    /** 3.5: 새로 그리는 덮개 떡메모지의 테두리 여부 */
+    private const val KEY_COVER_BORDER = "cover_border"
+
     /** 노트 여백 기본값 (노트 크기의 2%) */
     private const val DEFAULT_NOTE_MARGIN = 0.02f
 
@@ -148,8 +151,12 @@ object Prefs {
         set(value) = p().edit().putFloat(KEY_NOTE_MARGIN, value).apply()
 
     fun noteLayoutEnum(): NoteLayout = NoteLayout.of(noteLayout)
-
     fun noteAlignEnum(): NoteAlign = NoteAlign.of(noteAlign)
+
+    /** 3.5: 덮개 떡메모지에 얇은 테두리를 둘지 (기본은 없음 — 순수 흰 면) */
+    var coverBorder: Boolean
+        get() = p().getBoolean(KEY_COVER_BORDER, false)
+        set(value) = p().edit().putBoolean(KEY_COVER_BORDER, value).apply()
 
     /** 모든 설정 초기화 */
     fun reset() {

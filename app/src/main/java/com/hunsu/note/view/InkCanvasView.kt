@@ -78,6 +78,15 @@ class InkCanvasView @JvmOverloads constructor(
     /** 글자 도구로 캔버스를 눌렀을 때 (world 좌표). */
     var onTextTap: ((Float, Float) -> Unit)? = null
 
+    /**
+     * 캔버스를 처음 누를 때마다 부른다 (한 손가락이든 두 손가락 시작이든).
+     * 3.5: 글자 인라인 입력 확정과 포스트잇 커서 닫기에 쓴다 — 바깥을 누르면 입력이 끝난다.
+     */
+    var onCanvasTouchDown: (() -> Unit)? = null
+
+    /** 지금 그리는 덮개 떡메모지에 얇은 테두리를 둘지 (3.5 툴바의 '테두리 있음/없음') */
+    var coverBorder: Boolean = false
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var mode = MODE_NONE
@@ -160,6 +169,18 @@ class InkCanvasView @JvmOverloads constructor(
     fun screenToWorldX(x: Float): Float = (x - offsetX) / scale
     fun screenToWorldY(y: Float): Float = (y - offsetY) / scale
 
+    /**
+     * 화면을 [dx], [dy] 만큼 민다.
+     * 글자 입력창처럼 캔버스 위의 한 점을 키보드 위로 올려 보여줄 때 쓴다.
+     */
+    fun panBy(dx: Float, dy: Float) {
+        if (dx == 0f && dy == 0f) return
+        offsetX += dx
+        offsetY += dy
+        invalidate()
+        onTransformChanged?.invoke()
+    }
+
     /** 화면(뷰) 좌표계에서 지금 노트 영역이 차지하는 사각형. 녹화 영역 계산에 쓴다. */
     fun fitPage() {
         val p = page ?: return
@@ -229,6 +250,8 @@ class InkCanvasView @JvmOverloads constructor(
                 startWorldY = wy
                 lastWorldX = wx
                 lastWorldY = wy
+                // 바깥을 눌렀으니 입력 중이던 글자·포스트잇 커서를 먼저 닫는다.
+                onCanvasTouchDown?.invoke()
                 if (!canStartStroke(event.getToolType(0))) return true
                 erasePushed = false
                 when (tool) {
@@ -388,6 +411,8 @@ class InkCanvasView @JvmOverloads constructor(
         points.add(Pt(x, y))
         if (PagePainter.isShape(kind)) points.add(Pt(x, y))
         val element = DrawElement(kind, penColor, width, points)
+        // 덮개 떡메모지는 그 순간의 '테두리 있음/없음' 선택을 요소에 남긴다.
+        if (kind == ElementKind.COVER) element.border = coverBorder
         if (usePressureFor(event) && kind == ElementKind.STROKE) {
             element.pressures.add(pressureOf(event))
         }

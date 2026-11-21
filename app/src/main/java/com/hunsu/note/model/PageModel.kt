@@ -48,7 +48,13 @@ class DrawElement(
     val points: MutableList<Pt>,
     val pressures: MutableList<Float> = ArrayList(),
     /** 글자(TEXT) 요소의 내용. 다른 요소에서는 빈 문자열이다. */
-    var text: String = ""
+    var text: String = "",
+    /**
+     * 덮개 떡메모지(COVER)에 얇은 테두리를 그릴지.
+     * 3.5 부터 떡메모지를 놓을 때 '테두리 있음 / 없음'을 고를 수 있고, 그 선택이 요소에 남는다.
+     * 다른 요소에서는 쓰지 않는다.
+     */
+    var border: Boolean = false
 ) {
     /** 계산된 Path 캐시 (지우개/이동으로 목록이 바뀌면 무효화) */
     var cachedPath: Path? = null
@@ -64,7 +70,8 @@ class DrawElement(
         width,
         points.map { Pt(it.x, it.y) }.toMutableList(),
         ArrayList(pressures),
-        text
+        text,
+        border
     )
 
     /** 필압은 가장 얇을 때 기본 굵기의 35% 까지만 줄어든다. */

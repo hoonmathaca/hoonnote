@@ -83,7 +83,7 @@ class Toolbar34Test {
     }
 
     @Test
-    fun `글자 도구로 캔버스를 누르면 입력 팝업이 뜬다`() {
+    fun `글자 도구로 캔버스를 누르면 입력 팝업 대신 그 자리 입력창이 뜬다`() {
         val activity = activity()
         activity.findViewById<View>(R.id.btnText).performClick()
         val canvas = activity.findViewById<InkCanvasView>(R.id.canvasView)
@@ -91,9 +91,10 @@ class Toolbar34Test {
         touch(canvas, MotionEvent.ACTION_DOWN, 600f, 400f)
         touch(canvas, MotionEvent.ACTION_UP, 600f, 400f)
 
+        // 3.5 부터는 팝업(AlertDialog)을 쓰지 않고, 누른 자리에 바로 입력창이 뜬다.
         val dialog = ShadowDialog.getLatestDialog()
-        assertNotNull(dialog)
-        assertTrue(dialog.isShowing)
+        assertTrue(dialog == null || !dialog.isShowing)
+        assertNotNull(activity.inlineTextEditorForTest())
     }
 
     @Test

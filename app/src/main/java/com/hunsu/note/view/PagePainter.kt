@@ -27,6 +27,10 @@ object PagePainter {
     /** 덮개 떡메모지 색 — 배경을 완전히 가리는 불투명 흰색 */
     const val COVER_COLOR = 0xFFFFFFFF.toInt()
 
+    /** 덮개 떡메모지의 얇은 테두리 색·굵기 (노트 world 좌표) — '테두리 있음'을 고를 때만 */
+    const val COVER_BORDER_COLOR = 0xFF9E9E9E.toInt()
+    const val COVER_BORDER_WIDTH = 2.5f
+
     /** 형광펜은 같은 색을 옅게 덮어쓴다(약 43%). */
     const val HIGHLIGHTER_ALPHA = 110
     private const val GUIDE_STEP = 96f
@@ -59,6 +63,12 @@ object PagePainter {
 
     /** 글자 한 줄의 기준선 간격 */
     const val TEXT_LINE_SPACING = 1.3f
+
+    /**
+     * 글자 크기에 대한 첫 줄 기준선 위치(0.92배).
+     * 캔버스에 그리는 글자와 입력 중인 인라인 입력창이 같은 자리에 오도록 함께 쓴다.
+     */
+    const val TEXT_BASELINE_FACTOR = 0.92f
 
     /**
      * 글자 요소가 차지하는 영역. points[0] 이 글자의 왼쪽 위 모서리다.
@@ -337,13 +347,25 @@ object PagePainter {
     /**
      * 덮개 떡메모지: 아래(배경·먼저 쓴 필기)를 완전히 가리는 불투명 흰 사각형.
      * 그래서 이 요소 뒤에 그려진 것은 가려지고, 이 뒤에 새로 쓴 필기는 위에 보인다.
+     * [DrawElement.border] 가 켜져 있으면 가장자리에 얇은 회색 테두리를 두른다.
      */
     private fun drawCover(canvas: Canvas, el: DrawElement, paint: Paint) {
+        val rect = rectOf(el.points.first(), el.points.last())
         paint.reset()
         paint.isAntiAlias = true
         paint.style = Paint.Style.FILL
         paint.color = COVER_COLOR
-        canvas.drawRect(rectOf(el.points.first(), el.points.last()), paint)
+        canvas.drawRect(rect, paint)
+        if (!el.border || rect.width() <= 0f || rect.height() <= 0f) return
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = COVER_BORDER_WIDTH
+        paint.color = COVER_BORDER_COLOR
+        // 테두리가 사각형 밖으로 반쯤 나가지 않도록 안쪽으로 반 굵기만큼 줄여 그린다.
+        val half = COVER_BORDER_WIDTH / 2f
+        canvas.drawRect(
+            RectF(rect.left + half, rect.top + half, rect.right - half, rect.bottom - half),
+            paint
+        )
     }
 
     /** 글자: 배경·테두리 없이 선택한 색과 크기로 글자만 그린다. */
@@ -356,7 +378,7 @@ object PagePainter {
         paint.textSize = el.width
         val anchor = el.points.first()
         val lineHeight = el.width * TEXT_LINE_SPACING
-        var baseline = anchor.y + el.width * 0.92f
+        var baseline = anchor.y + el.width * TEXT_BASELINE_FACTOR
         for (line in textLines(el.text)) {
             canvas.drawText(line, anchor.x, baseline, paint)
             baseline += lineHeight
