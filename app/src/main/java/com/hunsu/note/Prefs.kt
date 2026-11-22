@@ -43,6 +43,9 @@ object Prefs {
     /** 3.5: 새로 그리는 덮개 떡메모지의 테두리 여부 */
     private const val KEY_COVER_BORDER = "cover_border"
 
+    /** 3.6: 교사용 교재의 하늘색 답안·해설을 가려서 보는지 */
+    private const val KEY_ANSWER_HIDDEN = "answer_hidden"
+
     /** 노트 여백 기본값 (노트 크기의 2%) */
     private const val DEFAULT_NOTE_MARGIN = 0.02f
 
@@ -157,6 +160,15 @@ object Prefs {
     var coverBorder: Boolean
         get() = p().getBoolean(KEY_COVER_BORDER, false)
         set(value) = p().edit().putBoolean(KEY_COVER_BORDER, value).apply()
+
+    /**
+     * 3.6: 교사용 교재의 하늘색 답안·해설을 가리고 보는지(기본은 꺼짐).
+     * 켜 두면 앱을 다시 열어도 그대로 켜져 있다 — 수업 내내 학생에게 보여 주는 화면이라
+     * 매번 다시 누르지 않게 한다.
+     */
+    var answerHidden: Boolean
+        get() = p().getBoolean(KEY_ANSWER_HIDDEN, false)
+        set(value) = p().edit().putBoolean(KEY_ANSWER_HIDDEN, value).apply()
 
     /** 모든 설정 초기화 */
     fun reset() {

@@ -31,6 +31,10 @@ import kotlin.math.sqrt
  *   남은 조각들이 각각의 획으로 다시 만들어진다.
  * 덮개 떡메모지(COVER)·글자(TEXT)는 조각내지 않고 통째로 지운다. 덮개는 이름자로 문질러도
  * 지워지지 않도록 테두리 가까이를 문지를 때만 지운다(위에 쓴 필기를 지우다 덮개가 사라지는 일 방지).
+ *
+ * 3.6 입력 방어: 모든 좌표는 **지금 쓰는 포인터의 id** 로만 읽고(손바닥·다른 손가락 좌표가 획에
+ * 섞이지 않게), 화면에서 크게 벗어난 좌표나 한 샘플에서 갑자기 멀리 튄 좌표는 획에 넣지 않는다.
+ * 그런 좌표가 들어오면 획을 끊고 새 획으로 잇기 때문에 화면 위아래로 긴 세로줄이 그어지지 않는다.
  */
 class InkCanvasView @JvmOverloads constructor(
     context: Context,
@@ -105,6 +109,20 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastWorldX = 0f
     private var lastWorldY = 0f
 
+    /**
+     * 3.6: 지금 획을 그리는(동작 중인) 포인터의 id.
+     * 예전에는 모든 좌표를 0번 인덱스에서 읽어, 손바닥이 먼저 닿아 펜이 1번이 되면
+     * 손바닥 좌표가 획에 섞여 화면 위아래로 긴 세로줄이 그어졌다.
+     */
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var activeIsStylus = false
+
+    /** 마지막으로 받아들인 점의 eventTime(ms) — 갑자기 튄 좌표를 속도로도 가려낸다. */
+    private var lastPointTime = 0L
+
+    /** 방금 좌표가 이상해 점을 버렸다 — 다음에 받아들인 점은 새 획으로 시작한다. */
+    private var reanchorPending = false
+
     companion object {
         private const val MODE_NONE = 0
         private const val MODE_DRAW = 1
@@ -116,6 +134,23 @@ class InkCanvasView @JvmOverloads constructor(
 
         private const val MIN_STROKE_STEP = 0.7f
         private const val ERASE_EXTRA = 14f
+
+        /** 화면(비율) 밖으로 이만큼 넘어간 좌표는 손바닥·호버 등으로 보고 버린다 (3.6) */
+        private const val OUT_OF_VIEW_FRACTION = 0.25f
+        private const val OUT_OF_VIEW_MIN_PX = 160f
+
+        /**
+         * 한 샘플에서 화면으로 이 비율(대각선 기준)을 넘게 튀거나, 아래 속도보다 빠르면
+         * 좌표가 잘못 들어온 것으로 본다 (3.6). 화면 px 기준이라 확대·축소해도 같은 감각으로 걸러진다.
+         */
+        private const val MAX_STEP_FRACTION = 0.35f
+        private const val MIN_STEP_LIMIT_PX = 180f
+
+        /** 사람이 펜으로 낼 수 있는 속도(화면 px/ms)를 넘는 이동은 튄 좌표로 본다 */
+        private const val MAX_STEP_SPEED_PX_PER_MS = 25f
+
+        /** 이벤트 시간이 같거나 없으면 한 샘플(60Hz)로 본다 */
+        private const val DEFAULT_SAMPLE_MS = 16L
 
         /** 글자 도구는 이 안에서 손을 떼면 그 자리에 글자를 넣는다 (world 좌표) */
         private const val TEXT_TAP_SLOP = 24f
@@ -241,135 +276,282 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (page == null) return false
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                parent?.requestDisallowInterceptTouchEvent(true)
-                mode = MODE_NONE
-                val wx = screenToWorldX(event.x)
-                val wy = screenToWorldY(event.y)
-                startWorldX = wx
-                startWorldY = wy
-                lastWorldX = wx
-                lastWorldY = wy
-                // 바깥을 눌렀으니 입력 중이던 글자·포스트잇 커서를 먼저 닫는다.
-                onCanvasTouchDown?.invoke()
-                if (!canStartStroke(event.getToolType(0))) return true
-                erasePushed = false
-                when (tool) {
-                    Tool.NOTE -> {
-                        // 사각형을 그려 포스트잇을 놓는 중
-                        mode = MODE_NOTE
-                        invalidate()
-                    }
-
-                    Tool.TEXT -> {
-                        mode = MODE_TEXT
-                    }
-
-                    Tool.ERASER -> {
-                        mode = MODE_ERASE
-                        eraseAt(wx, wy)
-                    }
-
-                    Tool.ERASER_PARTIAL -> {
-                        mode = MODE_ERASE_PARTIAL
-                        lastEraseX = wx
-                        lastEraseY = wy
-                        erasePartialAt(wx, wy)
-                    }
-
-                    else -> {
-                        mode = MODE_DRAW
-                        current = createElement(wx, wy, event)
-                        onStrokeStarted?.invoke()
-                        invalidate()
-                    }
-                }
-            }
-
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                if (event.pointerCount >= 2) {
-                    cancelCurrent()
-                    mode = MODE_GESTURE
-                    lastMidX = (event.getX(0) + event.getX(1)) / 2f
-                    lastMidY = (event.getY(0) + event.getY(1)) / 2f
-                    lastDistance = distanceOf(event)
-                }
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                when (mode) {
-                    MODE_GESTURE -> updateGesture(event)
-
-                    MODE_NOTE -> {
-                        lastWorldX = screenToWorldX(event.x)
-                        lastWorldY = screenToWorldY(event.y)
-                        invalidate()
-                    }
-
-                    MODE_DRAW -> {
-                        extendCurrent(event)
-                        invalidate()
-                    }
-
-                    MODE_ERASE -> eraseAt(screenToWorldX(event.x), screenToWorldY(event.y))
-
-                    MODE_ERASE_PARTIAL -> {
-                        val wx = screenToWorldX(event.x)
-                        val wy = screenToWorldY(event.y)
-                        erasePartialSweep(lastEraseX, lastEraseY, wx, wy)
-                        lastEraseX = wx
-                        lastEraseY = wy
-                    }
-                }
-            }
-
-            MotionEvent.ACTION_POINTER_UP -> {
-                if (event.pointerCount - 1 < 2) {
-                    mode = MODE_NONE
-                    lastDistance = 0f
-                }
-            }
-
-            MotionEvent.ACTION_UP -> {
-                val wx = screenToWorldX(event.x)
-                val wy = screenToWorldY(event.y)
-                when (mode) {
-                    MODE_DRAW -> finishCurrent()
-                    MODE_NOTE -> {
-                        lastWorldX = wx
-                        lastWorldY = wy
-                        val handler = onNoteRect
-                        invalidate()
-                        handler?.invoke(startWorldX, startWorldY, wx, wy)
-                    }
-
-                    MODE_TEXT -> {
-                        // 손을 크게 움직이지 않고 누른 자리에 글자를 넣는다.
-                        val dx = wx - startWorldX
-                        val dy = wy - startWorldY
-                        if (sqrt(dx * dx + dy * dy) <= TEXT_TAP_SLOP) {
-                            onTextTap?.invoke(startWorldX, startWorldY)
-                        }
-                    }
-                }
-                mode = MODE_NONE
-                lastDistance = 0f
-            }
-
+            MotionEvent.ACTION_DOWN -> return onTouchDown(event)
+            MotionEvent.ACTION_POINTER_DOWN -> onPointerDown(event)
+            MotionEvent.ACTION_MOVE -> onTouchMove(event)
+            MotionEvent.ACTION_POINTER_UP -> onPointerUp(event)
+            MotionEvent.ACTION_UP -> onTouchUp(event)
             MotionEvent.ACTION_CANCEL -> {
+                // 취소된 입력의 좌표는 쓰지 않는다 — 그리던 미리보기만 버린다.
                 cancelCurrent()
-                mode = MODE_NONE
-                lastDistance = 0f
+                endTouch()
             }
         }
         return true
     }
 
-    private fun canStartStroke(toolType: Int): Boolean {
-        val isPen = toolType == MotionEvent.TOOL_TYPE_STYLUS ||
-            toolType == MotionEvent.TOOL_TYPE_ERASER
-        return isPen || fingerDrawingAllowed
+    private fun onTouchDown(event: MotionEvent): Boolean {
+        parent?.requestDisallowInterceptTouchEvent(true)
+        mode = MODE_NONE
+        current = null
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        activeIsStylus = false
+        reanchorPending = false
+        lastPointTime = event.eventTime
+        // 바깥을 눌렀으니 입력 중이던 글자·포스트잇 커서를 먼저 닫는다.
+        onCanvasTouchDown?.invoke()
+        // 0·음수·범위 밖 좌표(호버·손바닥)로는 획을 시작하지 않는다.
+        if (!isUsablePoint(event.getX(0), event.getY(0))) return true
+        if (!canStartStroke(event.getToolType(0))) return true
+        activePointerId = event.getPointerId(0)
+        activeIsStylus = isStylusTool(event.getToolType(0))
+        startTouchAt(event.getX(0), event.getY(0), event, 0)
+        return true
     }
+
+    /** 한 포인터가 닿은 지점에서 도구별 동작을 시작한다. */
+    private fun startTouchAt(x: Float, y: Float, event: MotionEvent, index: Int) {
+        val wx = screenToWorldX(x)
+        val wy = screenToWorldY(y)
+        startWorldX = wx
+        startWorldY = wy
+        lastWorldX = wx
+        lastWorldY = wy
+        erasePushed = false
+        when (tool) {
+            Tool.NOTE -> {
+                // 사각형을 그려 포스트잇을 놓는 중
+                mode = MODE_NOTE
+                invalidate()
+            }
+
+            Tool.TEXT -> mode = MODE_TEXT
+
+            Tool.ERASER -> {
+                mode = MODE_ERASE
+                eraseAt(wx, wy)
+            }
+
+            Tool.ERASER_PARTIAL -> {
+                mode = MODE_ERASE_PARTIAL
+                lastEraseX = wx
+                lastEraseY = wy
+                erasePartialAt(wx, wy)
+            }
+
+            else -> {
+                mode = MODE_DRAW
+                current = createElement(wx, wy, event, index)
+                onStrokeStarted?.invoke()
+                invalidate()
+            }
+        }
+    }
+
+    private fun onPointerDown(event: MotionEvent) {
+        val index = event.actionIndex
+        val newIsStylus = isStylusTool(event.getToolType(index))
+        // 펜으로 쓰는 중에 손바닥·손가락이 닿으면 그 포인터는 무시한다(쓰던 획은 그대로 둔다).
+        if (mode == MODE_DRAW && activeIsStylus && !newIsStylus) return
+        // 손바닥이 먼저 닿아 있던 자리에 펜이 내려오면, 펜으로 새 획을 시작한다.
+        if (mode == MODE_NONE && newIsStylus && canStartStroke(event.getToolType(index)) &&
+            isUsablePoint(event.getX(index), event.getY(index))
+        ) {
+            cancelCurrent()
+            activePointerId = event.getPointerId(index)
+            activeIsStylus = true
+            lastPointTime = event.eventTime
+            startTouchAt(event.getX(index), event.getY(index), event, index)
+            return
+        }
+        if (event.pointerCount >= 2) {
+            // 두 손가락 확대·이동. 그리던 획은 버려 손가락으로 그은 점이 남지 않게 한다.
+            cancelCurrent()
+            mode = MODE_GESTURE
+            activePointerId = MotionEvent.INVALID_POINTER_ID
+            activeIsStylus = false
+            anchorGesture(event, -1)
+        }
+    }
+
+    private fun onTouchMove(event: MotionEvent) {
+        when (mode) {
+            MODE_GESTURE -> updateGesture(event)
+
+            MODE_NOTE -> {
+                val index = activeIndex(event)
+                if (index < 0) return
+                if (!isUsablePoint(event.getX(index), event.getY(index))) return
+                lastWorldX = screenToWorldX(event.getX(index))
+                lastWorldY = screenToWorldY(event.getY(index))
+                invalidate()
+            }
+
+            MODE_DRAW -> extendCurrent(event)
+
+            MODE_ERASE -> {
+                val index = activeIndex(event)
+                if (index < 0) return
+                if (!isUsablePoint(event.getX(index), event.getY(index))) return
+                eraseAt(screenToWorldX(event.getX(index)), screenToWorldY(event.getY(index)))
+            }
+
+            MODE_ERASE_PARTIAL -> {
+                val index = activeIndex(event)
+                if (index < 0) return
+                if (!isUsablePoint(event.getX(index), event.getY(index))) return
+                val wx = screenToWorldX(event.getX(index))
+                val wy = screenToWorldY(event.getY(index))
+                erasePartialSweep(lastEraseX, lastEraseY, wx, wy)
+                lastEraseX = wx
+                lastEraseY = wy
+            }
+        }
+    }
+
+    /**
+     * 포인터 하나가 떨어졌다.
+     * 쓰던 포인터가 아니면(손바닥이 먼저 떨어지는 등) 그대로 계속 그린다.
+     */
+    private fun onPointerUp(event: MotionEvent) {
+        val index = event.actionIndex
+        val isActive = activePointerId != MotionEvent.INVALID_POINTER_ID &&
+            event.getPointerId(index) == activePointerId
+        if (isActive) {
+            finishTouchWith(event, index)
+            activePointerId = MotionEvent.INVALID_POINTER_ID
+            activeIsStylus = false
+        }
+        if (mode == MODE_GESTURE) {
+            if (event.pointerCount - 1 >= 2) {
+                // 아직 두 손가락 이상 — 남은 포인터로 기준점을 다시 잡아 튀지 않게 한다.
+                anchorGesture(event, index)
+            } else {
+                mode = MODE_NONE
+                lastDistance = 0f
+            }
+        }
+    }
+
+    private fun onTouchUp(event: MotionEvent) {
+        val index = activeIndex(event)
+        if (index >= 0) {
+            // 마지막으로 떨어지는 포인터가 쓰던 포인터일 때만 그 좌표로 마무리한다.
+            finishTouchWith(event, index)
+        } else if (mode == MODE_DRAW) {
+            // 쓰던 포인터는 이미 떨어졌다 — 다른 포인터의 좌표를 섞지 않고 지금까지 그린 대로 남긴다.
+            finishCurrent()
+        } else if (mode == MODE_NOTE) {
+            // 좌표를 모르면 포스트잇을 놓지 않는다(엉뚱한 자리에 생기는 것 방지).
+            invalidate()
+        }
+        endTouch()
+    }
+
+    /**
+     * 지금 동작을 [index] 포인터의 마지막 좌표로 마무리한다.
+     * 좌표가 범위를 벗어났으면 마지막으로 받아들인 좌표를 쓴다.
+     */
+    private fun finishTouchWith(event: MotionEvent, index: Int) {
+        val sx = event.getX(index)
+        val sy = event.getY(index)
+        val usable = isUsablePoint(sx, sy)
+        val wx = if (usable) screenToWorldX(sx) else lastWorldX
+        val wy = if (usable) screenToWorldY(sy) else lastWorldY
+        when (mode) {
+            MODE_DRAW -> {
+                if (usable) extendCurrent(event)
+                finishCurrent()
+            }
+
+            MODE_NOTE -> {
+                if (usable) {
+                    lastWorldX = wx
+                    lastWorldY = wy
+                }
+                invalidate()
+                onNoteRect?.invoke(startWorldX, startWorldY, lastWorldX, lastWorldY)
+            }
+
+            MODE_TEXT -> {
+                // 손을 크게 움직이지 않고 누른 자리에 글자를 넣는다.
+                val dx = wx - startWorldX
+                val dy = wy - startWorldY
+                if (usable && sqrt(dx * dx + dy * dy) <= TEXT_TAP_SLOP) {
+                    onTextTap?.invoke(startWorldX, startWorldY)
+                }
+            }
+
+            else -> Unit
+        }
+        mode = MODE_NONE
+    }
+
+    private fun endTouch() {
+        mode = MODE_NONE
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        activeIsStylus = false
+        reanchorPending = false
+        lastDistance = 0f
+    }
+
+    /** 지금 동작 중인 포인터의 이벤트 내 인덱스. 다른 포인터의 좌표를 섞지 않으려고 항상 이 값을 쓴다. */
+    private fun activeIndex(event: MotionEvent): Int {
+        if (activePointerId == MotionEvent.INVALID_POINTER_ID) return -1
+        return event.findPointerIndex(activePointerId)
+    }
+
+    private fun isStylusTool(toolType: Int): Boolean =
+        toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_ERASER
+
+    private fun canStartStroke(toolType: Int): Boolean = isStylusTool(toolType) || fingerDrawingAllowed
+
+    // ---------------------------------------------------------------- 좌표 방어
+
+    /** 화면 폭(px). 화면에 붙기 전이면 노트 world 폭 × 배율을 쓴다. */
+    private fun screenWidthPx(): Float =
+        if (width > 0) width.toFloat() else (page?.worldWidth ?: 0f) * scale
+
+    private fun screenHeightPx(): Float =
+        if (height > 0) height.toFloat() else (page?.worldHeight ?: 0f) * scale
+
+    /**
+     * 쓸 수 있는 좌표인지. NaN·무한대이거나 화면(화면 크기를 모르면 노트)에서 크게 벗어난
+     * 좌표는 호버·손바닥·리프트에서 잘못 들어온 값으로 보고 버린다.
+     */
+    private fun isUsablePoint(x: Float, y: Float): Boolean {
+        if (!x.isFinite() || !y.isFinite()) return false
+        val w = screenWidthPx()
+        val h = screenHeightPx()
+        if (w <= 0f || h <= 0f) return true
+        val marginX = max(w * OUT_OF_VIEW_FRACTION, OUT_OF_VIEW_MIN_PX)
+        val marginY = max(h * OUT_OF_VIEW_FRACTION, OUT_OF_VIEW_MIN_PX)
+        return x >= -marginX && x <= w + marginX && y >= -marginY && y <= h + marginY
+    }
+
+    /**
+     * 한 샘플에서 이만큼(화면 px) 넘게 튀면 좌표가 잘못 들어온 것으로 본다.
+     * 오래 비었다가 들어온 점은 그 사이 실제로 크게 움직였을 수 있으므로 시간도 함께 본다.
+     */
+    private fun jumpLimit(dtMs: Long): Float {
+        val w = screenWidthPx()
+        val h = screenHeightPx()
+        val diag = sqrt(w * w + h * h)
+        val dt = if (dtMs > DEFAULT_SAMPLE_MS) dtMs.toFloat() else DEFAULT_SAMPLE_MS.toFloat()
+        return max(
+            min(diag * MAX_STEP_FRACTION, MAX_STEP_SPEED_PX_PER_MS * dt),
+            MIN_STEP_LIMIT_PX
+        )
+    }
+
+    /** 마지막 점에서 너무 멀리 튀었는지 (화면 px 기준) */
+    private fun stepTooFar(last: Pt, worldX: Float, worldY: Float, dtMs: Long): Boolean {
+        val dx = (worldX - last.x) * scale
+        val dy = (worldY - last.y) * scale
+        return sqrt(dx * dx + dy * dy) > jumpLimit(dtMs)
+    }
+
+    // ---------------------------------------------------------------- 획
 
     /** 기기가 보고하는 최대 압력 (압력 미지원이면 1). */
     private fun maxPressureOf(event: MotionEvent): Float = try {
@@ -380,16 +562,16 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** 스타일러스 압력을 0~1 로 정규화한다. 압력을 지원하지 않는 기기·손가락은 1 이 된다. */
-    private fun pressureOf(event: MotionEvent): Float {
+    private fun pressureOf(event: MotionEvent, index: Int): Float {
         val raw = try {
-            event.getPressure(0)
+            event.getPressure(index)
         } catch (e: Exception) {
             return 1f
         }
         return (raw / maxPressureOf(event)).coerceIn(0f, 1f)
     }
 
-    private fun createElement(x: Float, y: Float, event: MotionEvent): DrawElement {
+    private fun createElement(x: Float, y: Float, event: MotionEvent, index: Int): DrawElement {
         val kind = when (tool) {
             Tool.PEN -> ElementKind.STROKE
             Tool.HIGHLIGHTER -> ElementKind.HIGHLIGHTER
@@ -413,53 +595,143 @@ class InkCanvasView @JvmOverloads constructor(
         val element = DrawElement(kind, penColor, width, points)
         // 덮개 떡메모지는 그 순간의 '테두리 있음/없음' 선택을 요소에 남긴다.
         if (kind == ElementKind.COVER) element.border = coverBorder
-        if (usePressureFor(event) && kind == ElementKind.STROKE) {
-            element.pressures.add(pressureOf(event))
+        if (usePressureFor(event, index) && kind == ElementKind.STROKE) {
+            element.pressures.add(pressureOf(event, index))
         }
         return element
     }
 
     /** 이 입력에 필압을 적용할지: 설정이 켜져 있고, 스타일러스로 그린 획일 때 */
-    private fun usePressureFor(event: MotionEvent): Boolean {
+    private fun usePressureFor(event: MotionEvent, index: Int): Boolean {
         if (!pressureEnabled) return false
-        val toolType = event.getToolType(0)
-        return toolType == MotionEvent.TOOL_TYPE_STYLUS
+        return event.getToolType(index) == MotionEvent.TOOL_TYPE_STYLUS
     }
 
     private fun extendCurrent(event: MotionEvent) {
         val el = current ?: return
+        val index = activeIndex(event)
+        // 쓰던 포인터가 이 이벤트에 없으면 다른 포인터의 좌표를 섞지 않고 넘긴다.
+        if (index < 0) return
         if (PagePainter.isShape(el.kind)) {
+            // 도형은 시작점과 지금 점 두 점만 쓴다 — 범위 밖 좌표만 버리고 그대로 따라간다.
+            val sx = event.getX(index)
+            val sy = event.getY(index)
+            if (!isUsablePoint(sx, sy)) return
             el.points[el.points.size - 1] =
-                Pt(screenToWorldX(event.x), screenToWorldY(event.y))
+                Pt(screenToWorldX(sx), screenToWorldY(sy))
             el.cachedPath = null
+            lastPointTime = event.eventTime
+            return
+        }
+        if (el.kind == ElementKind.COVER) {
+            // 덮개(흰 사각형)도 한 번에 크게 그을 수 있다 — 튄 좌표로 긴 획이 남지 않으므로
+            // 범위 밖 좌표만 버리고 그대로 따라간다.
+            val sx = event.getX(index)
+            val sy = event.getY(index)
+            if (!isUsablePoint(sx, sy)) return
+            val wx = screenToWorldX(sx)
+            val wy = screenToWorldY(sy)
+            val lastCover = el.points.last()
+            val dxc = wx - lastCover.x
+            val dyc = wy - lastCover.y
+            if (sqrt(dxc * dxc + dyc * dyc) < MIN_STROKE_STEP) return
+            el.points.add(Pt(wx, wy))
+            el.cachedPath = null
+            lastPointTime = event.eventTime
             return
         }
         val maxPressure = maxPressureOf(event)
         for (h in 0 until event.historySize) {
             val historicalPressure = try {
-                (event.getHistoricalPressure(0, h) / maxPressure).coerceIn(0f, 1f)
+                (event.getHistoricalPressure(index, h) / maxPressure).coerceIn(0f, 1f)
             } catch (e: Exception) {
-                pressureOf(event)
+                pressureOf(event, index)
             }
-            addPoint(
+            addPointChecked(
                 el,
-                screenToWorldX(event.getHistoricalX(0, h)),
-                screenToWorldY(event.getHistoricalY(0, h)),
-                historicalPressure
+                event.getHistoricalX(index, h),
+                event.getHistoricalY(index, h),
+                historicalPressure,
+                event.eventTime
             )
         }
-        addPoint(el, screenToWorldX(event.x), screenToWorldY(event.y), pressureOf(event))
+        addPointChecked(
+            el,
+            event.getX(index),
+            event.getY(index),
+            pressureOf(event, index),
+            event.eventTime
+        )
     }
 
-    private fun addPoint(el: DrawElement, wxCandidate: Float, wyCandidate: Float, pressure: Float) {
+    /**
+     * 좌표를 걸러 획에 점을 넣는다.
+     * - 범위를 벗어난 좌표는 넣지 않고, 다음에 받아들인 점에서 획을 새로 시작한다.
+     * - 마지막 점에서 갑자기 멀리 튄 점도 이어 붙이지 않고 획을 끊는다.
+     *   (예전에는 그대로 이어 그려 화면 위아래로 긴 세로줄이 그어졌다.)
+     */
+    private fun addPointChecked(
+        el: DrawElement,
+        screenX: Float,
+        screenY: Float,
+        pressure: Float,
+        timeMs: Long
+    ) {
+        if (!isUsablePoint(screenX, screenY)) {
+            reanchorPending = true
+            return
+        }
         val last = el.points.lastOrNull() ?: return
-        val dx = wxCandidate - last.x
-        val dy = wyCandidate - last.y
-        if (sqrt(dx * dx + dy * dy) < MIN_STROKE_STEP) return
+        val wx = screenToWorldX(screenX)
+        val wy = screenToWorldY(screenY)
+        val dt = if (timeMs >= lastPointTime) timeMs - lastPointTime else 0L
+        val dx = wx - last.x
+        val dy = wy - last.y
+        val moved = sqrt(dx * dx + dy * dy)
+        if (stepTooFar(last, wx, wy, dt)) {
+            // 튄 좌표는 획에 넣지 않는다(화면 끝까지 이어지는 세로줄 방지).
+            reanchorPending = true
+            return
+        }
+        if (reanchorPending) {
+            reanchorPending = false
+            // 시간상 가능한 이동인데도 한참 멀리 옮겨졌으면 긴 선을 긋지 않고 새 획으로 시작한다.
+            if (moved * scale > jumpLimit(0L)) {
+                splitStrokeAt(el, wx, wy, pressure, timeMs)
+                return
+            }
+        }
+        if (moved < MIN_STROKE_STEP) return
+        appendPoint(el, wx, wy, pressure)
+        lastPointTime = timeMs
+    }
+
+    private fun appendPoint(el: DrawElement, wx: Float, wy: Float, pressure: Float) {
         val trackPressure = el.pressures.isNotEmpty() && el.pressures.size == el.points.size
-        el.points.add(Pt(wxCandidate, wyCandidate))
+        el.points.add(Pt(wx, wy))
         if (trackPressure) el.pressures.add(pressure)
         el.cachedPath = null
+    }
+
+    /** 좌표가 크게 튀었을 때: 지금까지 그린 획은 남기고 이 점에서 새 획을 시작한다. */
+    private fun splitStrokeAt(
+        el: DrawElement,
+        wx: Float,
+        wy: Float,
+        pressure: Float,
+        timeMs: Long
+    ) {
+        val trackPressure = el.pressures.isNotEmpty() && el.pressures.size == el.points.size
+        finishCurrent()
+        val next = DrawElement(el.kind, el.color, el.width, ArrayList<Pt>())
+        next.points.add(Pt(wx, wy))
+        if (trackPressure) next.pressures.add(pressure)
+        current = next
+        mode = MODE_DRAW
+        lastPointTime = timeMs
+        reanchorPending = false
+        invalidate()
+        onStrokeStarted?.invoke()
     }
 
     private fun finishCurrent() {
@@ -467,8 +739,8 @@ class InkCanvasView @JvmOverloads constructor(
         current = null
         val p = page ?: return
         if (PagePainter.isAtomic(el.kind)) {
-            val a = el.points.first()
-            val b = el.points.last()
+            val a = el.points.firstOrNull() ?: return
+            val b = el.points.lastOrNull() ?: return
             val dx = a.x - b.x
             val dy = a.y - b.y
             if (sqrt(dx * dx + dy * dy) < 3f) {
@@ -499,6 +771,31 @@ class InkCanvasView @JvmOverloads constructor(
         val dx = event.getX(0) - event.getX(1)
         val dy = event.getY(0) - event.getY(1)
         return sqrt(dx * dx + dy * dy)
+    }
+
+    /**
+     * 두 손가락 제스처의 기준점을 지금 이벤트의 좌표로 다시 잡는다.
+     * [skipIndex] 는 방금 올라간 포인터다(없으면 -1). 다시 잡지 않으면 인덱스가 밀리는 순간
+     * 화면이 갑자기 튄다.
+     */
+    private fun anchorGesture(event: MotionEvent, skipIndex: Int) {
+        val picked = ArrayList<Int>(2)
+        for (i in 0 until event.pointerCount) {
+            if (i == skipIndex) continue
+            picked.add(i)
+            if (picked.size == 2) break
+        }
+        if (picked.size < 2) {
+            lastDistance = 0f
+            return
+        }
+        val ax = event.getX(picked[0])
+        val ay = event.getY(picked[0])
+        val bx = event.getX(picked[1])
+        val by = event.getY(picked[1])
+        lastMidX = (ax + bx) / 2f
+        lastMidY = (ay + by) / 2f
+        lastDistance = sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
     }
 
     private fun updateGesture(event: MotionEvent) {

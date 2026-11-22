@@ -48,6 +48,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hunsu.note.databinding.ActivityMainBinding
+import com.hunsu.note.io.AnswerHider
 import com.hunsu.note.io.PageBackgroundCache
 import com.hunsu.note.io.PageExporter
 import com.hunsu.note.io.PdfPageProvider
@@ -113,6 +114,15 @@ class MainActivity : AppCompatActivity() {
 
     /** 3.5: 새로 그리는 덮개 떡메모지에 얇은 테두리를 둘지 (기본은 없음 = 순수 흰 면) */
     private var coverBordered = false
+
+    /** 3.6: 교사용 교재의 하늘색 답안·해설을 가리고 보는지 */
+    private var answerHidden = false
+
+    /**
+     * '답안 가리기'로 만든 화면용 사본. 페이지를 넘길 때마다 다시 만들지 않도록
+     * 최근 두 장만 들고 있다(원본 배경·캐시 파일은 그대로 둔다).
+     */
+    private val answerBackgrounds = HashMap<String, Bitmap>()
 
     /** 3.5: 팝업 없이 캔버스 그 자리에서 받는 글자 입력기 */
     private var inlineText: InlineTextEditor? = null
@@ -228,6 +238,7 @@ class MainActivity : AppCompatActivity() {
         highlighterColor = Prefs.highlighterColor
         highlighterWidth = Prefs.highlighterWidth
         coverBordered = Prefs.coverBorder
+        answerHidden = Prefs.answerHidden
         lastAlign = Prefs.noteAlign
         lastMargin = Prefs.noteMargin
 
@@ -238,6 +249,7 @@ class MainActivity : AppCompatActivity() {
         setupCoverBorderChips()
         refreshPalette()
         refreshWidthButtons()
+        refreshAnswerHideButton()
 
         onBackPressedDispatcher.addCallback(this) { onBackPressedWithInputs() }
 
@@ -356,6 +368,7 @@ class MainActivity : AppCompatActivity() {
             commitInputs()
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        binding.btnAnswerHide.setOnClickListener { setAnswerHidden(!answerHidden) }
     }
 
     /** 3.5: 메뉴·도구를 건드리기 전에 입력 중인 글자를 확정하고 포스트잇 커서를 닫는다. */
@@ -889,7 +902,7 @@ class MainActivity : AppCompatActivity() {
         }
         val ready = backgroundCache.getMemory(page.backgroundKey)
             ?: page.renderedBackground?.takeIf { !it.isRecycled }
-        binding.canvasView.setPage(page, ready)
+        binding.canvasView.setPage(page, displayBackground(page, ready))
         bindNotes(page)
         updatePageInfo()
         updateUndoRedo()
@@ -1084,6 +1097,60 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- 배경(PDF/이미지)
 
+    // ---------------------------------------------------------------- 답안 가리기 (3.6)
+
+    /**
+     * '답안 가리기' 켜고 끄기.
+     * 켜면 지금 보는 페이지 배경의 하늘색 답안·해설만 흰색으로 지운 사본을 화면에 올린다.
+     * 원본 배경과 캐시 파일은 건드리지 않으므로, 다시 끄면 원래 답안이 그대로 돌아온다.
+     */
+    private fun setAnswerHidden(hidden: Boolean) {
+        if (answerHidden == hidden) return
+        answerHidden = hidden
+        Prefs.answerHidden = hidden
+        answerBackgrounds.clear()
+        refreshAnswerHideButton()
+        val page = lecture.currentPage
+        if (page != null) {
+            val source = backgroundCache.getMemory(page.backgroundKey)
+                ?: page.renderedBackground?.takeIf { !it.isRecycled }
+            binding.canvasView.setPageBackground(displayBackground(page, source))
+            dirtyPages.addAll(lecture.pages)
+            scheduleThumbRefresh(0)
+        }
+        toast(getString(if (hidden) R.string.answer_hide_on_hint else R.string.answer_hide_off_hint))
+    }
+
+    /** 상단 '답안 가리기' 버튼의 켜짐 상태를 보여 준다. */
+    private fun refreshAnswerHideButton() {
+        val on = ContextCompat.getColor(this, R.color.tool_text_selected)
+        val off = ContextCompat.getColor(this, R.color.tool_text)
+        binding.btnAnswerHide.setTextColor(if (answerHidden) on else off)
+        binding.btnAnswerHide.backgroundTintList =
+            ColorStateList.valueOf(if (answerHidden) 0x33FFFFFF else 0x00000000)
+    }
+
+    /**
+     * 화면에 올릴 배경. '답안 가리기'가 꺼져 있으면 원본 그대로, 켜져 있으면
+     * 하늘색 답안을 흰색으로 지운 사본을 준다(페이지마다 한 번만 만들어 둔다).
+     */
+    private fun displayBackground(page: Page, source: Bitmap?): Bitmap? {
+        if (source == null || !answerHidden) return source
+        val key = page.backgroundKey
+        answerBackgrounds[key]?.takeIf { !it.isRecycled }?.let { return it }
+        val filtered = try {
+            AnswerHider.hide(source)
+        } catch (e: OutOfMemoryError) {
+            return source
+        } catch (e: Exception) {
+            return source
+        }
+        // 페이지 수만큼 쌓이지 않도록 두 장만 기억한다(나머지는 GC 가 회수).
+        if (answerBackgrounds.size >= 2) answerBackgrounds.clear()
+        answerBackgrounds[key] = filtered
+        return filtered
+    }
+
     /**
      * 지금 보는 페이지의 배경을 준비한다.
      * 메모리 → 캐시 파일 → 원본 PDF 순으로 찾고, 새로 그린 배경은 캐시 파일로 남긴다.
@@ -1098,7 +1165,9 @@ class MainActivity : AppCompatActivity() {
         val inMemory = backgroundCache.getMemory(key)
         if (inMemory != null) {
             page.renderedBackground = inMemory
-            if (lecture.currentPage === page) binding.canvasView.setPageBackground(inMemory)
+            if (lecture.currentPage === page) {
+                binding.canvasView.setPageBackground(displayBackground(page, inMemory))
+            }
             return
         }
         val alreadyLoading = synchronized(pendingBackgrounds) { !pendingBackgrounds.add(key) }
@@ -1122,8 +1191,10 @@ class MainActivity : AppCompatActivity() {
                     return@post
                 }
                 page.renderedBackground = bitmap
+                // 새로 그린 배경이므로 예전 '답안 가리기' 사본은 버린다.
+                answerBackgrounds.remove(page.backgroundKey)
                 if (lecture.currentPage === page) {
-                    binding.canvasView.setPageBackground(bitmap)
+                    binding.canvasView.setPageBackground(displayBackground(page, bitmap))
                 }
                 releaseBackgrounds(page)
                 dirtyPages.add(page)
@@ -1230,9 +1301,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun backgroundForThumb(page: Page): Bitmap? {
         if (!page.hasContent) return null
-        page.renderedBackground?.takeIf { !it.isRecycled }?.let { return it }
-        backgroundCache.load(page.backgroundKey, THUMB_WIDTH * 2)?.let { return it }
-        return renderFromSource(page, 360)
+        page.renderedBackground?.takeIf { !it.isRecycled }?.let { return displayBackground(page, it) }
+        backgroundCache.load(page.backgroundKey, THUMB_WIDTH * 2)?.let { small ->
+            if (!answerHidden) return small
+            return try {
+                AnswerHider.hide(small)
+            } catch (e: Exception) {
+                small
+            }
+        }
+        val rendered = renderFromSource(page, 360) ?: return null
+        if (answerHidden) {
+            // 방금 그린 비트맵이라 어디에도 공유되지 않는다 — 그 자리에서 지운다.
+            try {
+                AnswerHider.hideInPlace(rendered)
+            } catch (e: Exception) {
+                // 무시
+            }
+        }
+        return rendered
     }
 
     /**
@@ -1448,6 +1535,13 @@ class MainActivity : AppCompatActivity() {
 
     /** 테스트용: 페이지 배경 캐시 */
     internal fun backgroundCacheForTest(): PageBackgroundCache = backgroundCache
+
+    /** 테스트용: '답안 가리기'가 켜져 있는지 */
+    internal fun answerHiddenForTest(): Boolean = answerHidden
+
+    /** 테스트용: 지금 설정으로 이 배경이 화면에 어떻게 올려지는지 */
+    internal fun displayBackgroundForTest(page: Page, source: Bitmap?): Bitmap? =
+        displayBackground(page, source)
 
     /** 테스트용: 페이지 이동 */
     internal fun goToPageForTest(index: Int) = goToPage(index)

@@ -92,6 +92,13 @@
                     android:textColor="@color/record_red" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAnswerHide"
+                    style="@style/Widget.HunsuNote.Button.Menu"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/answer_hide" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnMenuSettings"
                     style="@style/Widget.HunsuNote.Button.Menu"
                     android:layout_width="wrap_content"

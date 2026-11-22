@@ -11,6 +11,11 @@
     <string name="menu_record">녹화</string>
     <string name="menu_settings">설정</string>
 
+    <!-- 3.6: 교사용 교재 하늘색 답안·해설 가리기 -->
+    <string name="answer_hide">답안 가리기</string>
+    <string name="answer_hide_on_hint">하늘색 답안·해설을 가렸습니다</string>
+    <string name="answer_hide_off_hint">답안·해설을 원래대로 보입니다</string>
+
     <string name="menu_new_lecture">새 강의</string>
     <string name="menu_new_note">새 노트 (전체 비우기)</string>
     <string name="menu_quit">종료</string>
