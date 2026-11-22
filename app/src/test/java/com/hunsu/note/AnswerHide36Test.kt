@@ -107,6 +107,41 @@ class AnswerHide36Test {
     }
 
     @Test
+    fun `답안 가리기를 켜면 저장하는 그림에서도 답안이 지워진다`() {
+        Prefs.reset()
+        val activity = activity()
+        val page = pageWithContent()
+        val background = teacherBackground()
+        assertTrue(
+            "배경을 캐시 파일로 저장하지 못했습니다",
+            activity.backgroundCacheForTest().save(page.backgroundKey, background, jpeg = false)
+        )
+
+        // 꺼져 있을 때는 캐시에 든 원본 그대로 내보낸다.
+        val plain = activity.backgroundForExportForTest(page)
+        assertNotNull("내보낼 배경을 만들지 못했습니다", plain)
+        assertEquals("꺼져 있는데 답안이 지워졌습니다", Color.rgb(36, 162, 200), plain!!.getPixel(30, 9))
+        plain.recycle()
+
+        activity.findViewById<View>(R.id.btnAnswerHide).performClick()
+        assertTrue(activity.answerHiddenForTest())
+
+        val hidden = activity.backgroundForExportForTest(page)
+        assertNotNull("내보낼 배경을 만들지 못했습니다", hidden)
+        assertEquals("저장하는 그림에 답안이 남아 있습니다", Color.WHITE, hidden!!.getPixel(30, 9))
+        assertEquals("저장하는 그림의 본문이 지워졌습니다", Color.rgb(20, 20, 20), hidden.getPixel(30, 23))
+        hidden.recycle()
+
+        // 캐시 파일의 원본은 그대로 — 다시 끄면 답안이 나온다.
+        activity.findViewById<View>(R.id.btnAnswerHide).performClick()
+        assertFalse(activity.answerHiddenForTest())
+        val back = activity.backgroundForExportForTest(page)
+        assertNotNull("내보낼 배경을 만들지 못했습니다", back)
+        assertEquals("끈 뒤에 내보낸 그림에 답안이 없습니다", Color.rgb(36, 162, 200), back!!.getPixel(30, 9))
+        back.recycle()
+    }
+
+    @Test
     fun `답안 가리기는 기본적으로 꺼져 있다`() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         Prefs.reset()

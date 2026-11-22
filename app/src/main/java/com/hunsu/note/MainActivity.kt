@@ -1333,8 +1333,23 @@ class MainActivity : AppCompatActivity() {
      */
     private fun backgroundForExport(page: Page): Bitmap? {
         if (!page.hasContent) return null
-        backgroundCache.load(page.backgroundKey)?.let { return it }
-        return renderFromSource(page, page.backgroundPixelWidth())
+        val source = backgroundCache.load(page.backgroundKey)
+            ?: renderFromSource(page, page.backgroundPixelWidth())
+            ?: return null
+        if (!answerHidden) return source
+        // 저장하는 파일도 화면과 같은 상태로 만든다 — '답안 가리기'가 켜져 있으면 하늘색 답안을 지운
+        // 사본을 준다. 캐시 파일에서 읽은 배경은 수정할 수 없는(immutable) 비트맵이라
+        // [AnswerHider.hide] 로 수정 가능한 사본을 만들고 원본은 여기서 놓아준다.
+        return try {
+            val hidden = AnswerHider.hide(source)
+            if (!source.isRecycled) source.recycle()
+            hidden
+        } catch (e: OutOfMemoryError) {
+            // 지우지 못하면 원본을 그대로 내보낸다(화면만 가리는 것은 그대로 유지).
+            source
+        } catch (e: Exception) {
+            source
+        }
     }
 
     private fun closeAllPdfs() {
@@ -1547,6 +1562,9 @@ class MainActivity : AppCompatActivity() {
     /** 테스트용: 지금 설정으로 이 배경이 화면에 어떻게 올려지는지 */
     internal fun displayBackgroundForTest(page: Page, source: Bitmap?): Bitmap? =
         displayBackground(page, source)
+
+    /** 테스트용: 내보내기(PNG/PDF)에 쓰는 배경 */
+    internal fun backgroundForExportForTest(page: Page): Bitmap? = backgroundForExport(page)
 
     /** 테스트용: 페이지 이동 */
     internal fun goToPageForTest(index: Int) = goToPage(index)
