@@ -1114,7 +1114,12 @@ class MainActivity : AppCompatActivity() {
         if (page != null) {
             val source = backgroundCache.getMemory(page.backgroundKey)
                 ?: page.renderedBackground?.takeIf { !it.isRecycled }
-            binding.canvasView.setPageBackground(displayBackground(page, source))
+            if (source != null) {
+                binding.canvasView.setPageBackground(displayBackground(page, source))
+            } else if (page.hasContent) {
+                // 배경이 아직 올라오지 않은 페이지 — 원본부터 다시 불러와 그 사본을 올린다.
+                loadBackground(page)
+            }
             dirtyPages.addAll(lecture.pages)
             scheduleThumbRefresh(0)
         }
