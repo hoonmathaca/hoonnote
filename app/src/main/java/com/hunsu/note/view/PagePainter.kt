@@ -12,8 +12,10 @@ import com.hunsu.note.model.ElementKind
 import com.hunsu.note.model.Page
 import com.hunsu.note.model.Pt
 import com.hunsu.note.model.StickyNote
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -142,9 +144,18 @@ object PagePainter {
         }
     }
 
+    /** 획 시작·끝의 둥근 마감을 몇 조각으로 그릴지 */
+    private const val CAP_SEGMENTS = 10
+
     /**
      * 필압으로 굵기가 변하는 선은 획 폭이 점마다 달라지므로,
      * 양쪽 외곽선을 이어 붙인 하나의 채움 경로(리본)로 만든다.
+     *
+     * 3.7: 시작·끝의 둥근 마감을 **같은 외곽선의 일부**로 이어 붙인다.
+     * 예전에는 리본을 만든 뒤 `addCircle(…, Path.Direction.CW)` 로 원을 따로 더했는데,
+     * 리본 외곽선은 감김 방향이 그 반대라 겹치는 부분에서 감김이 0이 되고(nonzero 채움),
+     * 그래서 **획 시작·끝마다 동그란 구멍이 뚫렸다**. 사용자가 태블릿에서 본 그 자국이다.
+     * (필압이 켜진 S Pen 획에서만 생기고, 손가락·필압 없는 획은 STROKE 방식이라 없었다.)
      */
     fun buildRibbon(el: DrawElement, path: Path) {
         path.reset()
@@ -160,6 +171,10 @@ object PagePainter {
         val leftY = FloatArray(n)
         val rightX = FloatArray(n)
         val rightY = FloatArray(n)
+        var startTx = 1f
+        var startTy = 0f
+        var endTx = 1f
+        var endTy = 0f
 
         for (i in 0 until n) {
             val prev = pts[if (i > 0) i - 1 else i]
@@ -178,17 +193,45 @@ object PagePainter {
             leftY[i] = pts[i].y + ny * half
             rightX[i] = pts[i].x - nx * half
             rightY[i] = pts[i].y - ny * half
+            // 법선(nx, ny)의 수직 방향이 진행 방향이다 — 마감 원을 그릴 때 쓴다.
+            if (i == 0) {
+                startTx = ny
+                startTy = -nx
+            }
+            if (i == n - 1) {
+                endTx = ny
+                endTy = -nx
+            }
         }
+
+        val startHalf = max(el.widthAt(0) / 2f, 0.3f)
+        val endHalf = max(el.widthAt(n - 1) / 2f, 0.3f)
 
         path.moveTo(leftX[0], leftY[0])
         for (i in 1 until n) path.lineTo(leftX[i], leftY[i])
-        for (i in n - 1 downTo 0) path.lineTo(rightX[i], rightY[i])
+        // 끝 마감: 왼쪽 외곽 → 획 끝을 돌아 오른쪽 외곽
+        for (k in 1 until CAP_SEGMENTS) {
+            val a = Math.PI * k / CAP_SEGMENTS
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            path.lineTo(
+                pts[n - 1].x + (-endTy) * endHalf * c + endTx * endHalf * s,
+                pts[n - 1].y + endTx * endHalf * c + endTy * endHalf * s
+            )
+        }
+        path.lineTo(rightX[n - 1], rightY[n - 1])
+        for (i in n - 2 downTo 0) path.lineTo(rightX[i], rightY[i])
+        // 시작 마감: 오른쪽 외곽 → 획 시작을 돌아 왼쪽 외곽
+        for (k in 1 until CAP_SEGMENTS) {
+            val a = Math.PI * k / CAP_SEGMENTS
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            path.lineTo(
+                pts[0].x + startTy * startHalf * c - startTx * startHalf * s,
+                pts[0].y - startTx * startHalf * c - startTy * startHalf * s
+            )
+        }
         path.close()
-        // 시작·끝을 둥글게 마감한다.
-        path.addCircle(pts[0].x, pts[0].y, max(el.widthAt(0) / 2f, 0.3f), Path.Direction.CW)
-        path.addCircle(
-            pts[n - 1].x, pts[n - 1].y, max(el.widthAt(n - 1) / 2f, 0.3f), Path.Direction.CW
-        )
     }
 
     /**

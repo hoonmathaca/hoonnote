@@ -352,16 +352,23 @@ class Page(
         const val RENDER_FALLBACK_WIDTH = 1024
     }
 
-    /** 요소를 변경하기 직전에 호출한다. */
+    /**
+     * 요소를 변경하기 직전에 호출한다.
+     *
+     * 3.7: 완성된 요소(점이 다 들어간 획·도형·글자)는 목록에 들어간 뒤에는 절대 바뀌지 않고,
+     * 바뀌는 것은 지금 그리는 중인 요소뿐이다. 그래서 되돌리기 기록은 **요소 목록만 복사**한다.
+     * 예전에는 획을 하나 마칠 때마다 페이지의 모든 획과 점을 깊은 복사해(최대 60단계),
+     * 필기할수록 점 객체가 수십만 개씩 쌓여 GC 가 자주 멈췄다 — 버벅임의 한 원인이었다.
+     */
     fun pushUndo() {
-        undoStack.addLast(ArrayList(elements.map { it.deepCopy() }))
+        undoStack.addLast(ArrayList(elements))
         while (undoStack.size > MAX_UNDO) undoStack.removeFirst()
         redoStack.clear()
     }
 
     fun undo(): Boolean {
         val previous = undoStack.removeLastOrNull() ?: return false
-        redoStack.addLast(ArrayList(elements.map { it.deepCopy() }))
+        redoStack.addLast(ArrayList(elements))
         elements.clear()
         elements.addAll(previous)
         return true
@@ -369,7 +376,7 @@ class Page(
 
     fun redo(): Boolean {
         val next = redoStack.removeLastOrNull() ?: return false
-        undoStack.addLast(ArrayList(elements.map { it.deepCopy() }))
+        undoStack.addLast(ArrayList(elements))
         elements.clear()
         elements.addAll(next)
         return true

@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -35,6 +36,11 @@ import kotlin.math.sqrt
  * 3.6 입력 방어: 모든 좌표는 **지금 쓰는 포인터의 id** 로만 읽고(손바닥·다른 손가락 좌표가 획에
  * 섞이지 않게), 화면에서 크게 벗어난 좌표나 한 샘플에서 갑자기 멀리 튄 좌표는 획에 넣지 않는다.
  * 그런 좌표가 들어오면 획을 끊고 새 획으로 잇기 때문에 화면 위아래로 긴 세로줄이 그어지지 않는다.
+ *
+ * 3.7 그리기 성능: 완성된 배경·필기를 화면 크기 비트맵([contentCache])에 한 번 구워 두고, 그리는 동안에는
+ * 그 비트맵 한 장 + 지금 그리는 획만 그린다. 예전에는 터치가 움직이는 **매 프레임마다 페이지 전체**
+ * (PDF 배경·안내선·모든 획의 경로)를 다시 그려, 획이 많아지거나 확대한 상태에서 필기가 버벅였다.
+ * 그리는 동안의 무효화도 방금 지나간 구간만 하도록 좁혔다.
  */
 class InkCanvasView @JvmOverloads constructor(
     context: Context,
@@ -92,6 +98,28 @@ class InkCanvasView @JvmOverloads constructor(
     var coverBorder: Boolean = false
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // ---------------------------------------------------------------- 3.7 그리기 캐시
+
+    /**
+     * 완성된 내용(노트 바탕·PDF 배경·안내선·이미 그린 획·포스트잇)을 지금 확대·이동 상태로 구워 둔
+     * 화면 크기 비트맵. 그리는 동안 매 프레임 페이지 전체를 다시 그리지 않게 한다.
+     */
+    private var contentCache: Bitmap? = null
+    private var contentValid = false
+    private var contentW = 0
+    private var contentH = 0
+    private var contentScale = 0f
+    private var contentOffsetX = 0f
+    private var contentOffsetY = 0f
+
+    /** 테스트에서 '페이지 전체를 몇 번 다시 긁었는지'를 세려고 둔 값 */
+    internal var contentRebuildCount = 0
+        private set
+
+    /** 테스트에서 '그리는 중 부분 다시 그리기를 몇 번 시켰는지'를 세려고 둔 값 */
+    internal var liveInvalidateCount = 0
+        private set
 
     private var mode = MODE_NONE
     private var current: DrawElement? = null
@@ -171,32 +199,42 @@ class InkCanvasView @JvmOverloads constructor(
         this.backgroundBitmap = background
         this.current = null
         this.mode = MODE_NONE
+        invalidateContent()
         fitPage()
         invalidate()
     }
 
     fun setPageBackground(bitmap: Bitmap?) {
         backgroundBitmap = bitmap
-        invalidate()
+        invalidateContent()
     }
 
     fun refresh() {
-        invalidate()
+        invalidateContent()
         onTransformChanged?.invoke()
     }
 
     fun undo(): Boolean {
         val p = page ?: return false
         val ok = p.undo()
-        if (ok) invalidate()
+        if (ok) invalidateContent()
         return ok
     }
 
     fun redo(): Boolean {
         val p = page ?: return false
         val ok = p.redo()
-        if (ok) invalidate()
+        if (ok) invalidateContent()
         return ok
+    }
+
+    /**
+     * 캐시를 버리고 다음 그리기에서 페이지 전체를 다시 긁게 한다.
+     * 페이지 내용을 이 뷰 밖(액티비티)에서 바꿀 때도 이 함수를 부른다.
+     */
+    fun invalidateContent() {
+        contentValid = false
+        invalidate()
     }
 
     // ---------------------------------------------------------------- 좌표 변환
@@ -237,23 +275,145 @@ class InkCanvasView @JvmOverloads constructor(
         fitPage()
     }
 
+    override fun onDetachedFromWindow() {
+        contentValid = false
+        contentCache?.recycle()
+        contentCache = null
+        super.onDetachedFromWindow()
+    }
+
     // ---------------------------------------------------------------- 그리기
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val p = page ?: return
+        if (width <= 0 || height <= 0) return
+
+        // 캐시가 지금 화면 상태(크기·확대·이동)와 맞지 않으면 다시 긁는다.
+        val cacheFits = contentValid && contentW == width && contentH == height &&
+            contentScale == scale && contentOffsetX == offsetX && contentOffsetY == offsetY
+        if (!cacheFits) {
+            if (mode == MODE_GESTURE && contentValid && contentW == width && contentH == height) {
+                // 두 손가락 확대·이동 중: 매 프레임 전체를 다시 긁지 않고, 갖고 있던 캐시를
+                // 바뀐 확대·이동만큼 늘려 그린다(제스처가 끝나면 다음 그리기에서 다시 긁는다).
+                drawStaleCache(canvas)
+                return
+            }
+            if (mode == MODE_ERASE || mode == MODE_ERASE_PARTIAL) {
+                // 지우는 동안은 캐시를 매번 다시 긁지 않고 화면에 바로 그린다(예전과 같은 비용).
+                drawPageDirect(canvas, p)
+                return
+            }
+            rebuildContent(p)
+        }
+        contentCache?.let { if (!it.isRecycled) canvas.drawBitmap(it, 0f, 0f, null) }
+
+        // 그리는 중인 요소 미리보기
+        if (current != null || mode == MODE_NOTE) {
+            canvas.save()
+            canvas.translate(offsetX, offsetY)
+            canvas.scale(scale, scale)
+            canvas.clipRect(0f, 0f, p.worldWidth, p.worldHeight)
+            current?.let { PagePainter.drawElement(canvas, it, paint) }
+            if (mode == MODE_NOTE) drawNotePreview(canvas)
+            canvas.restore()
+        }
+    }
+
+    /** 캐시를 쓰지 않고 화면에 바로 페이지를 그린다(지우개로 문지르는 동안). */
+    private fun drawPageDirect(canvas: Canvas, p: Page) {
         canvas.save()
         canvas.translate(offsetX, offsetY)
         canvas.scale(scale, scale)
         canvas.clipRect(0f, 0f, p.worldWidth, p.worldHeight)
-
         PagePainter.drawPage(canvas, p, backgroundBitmap, paint)
-
-        // 그리는 중인 요소 미리보기
         current?.let { PagePainter.drawElement(canvas, it, paint) }
-        if (mode == MODE_NOTE) drawNotePreview(canvas)
-
         canvas.restore()
+    }
+
+    /**
+     * 지금 화면 상태로 페이지 전체(배경 + 이미 그린 모든 획)를 캐시 비트맵에 다시 긁는다.
+     * 캐시가 없거나 화면 크기가 바뀔 때만 비트맵을 새로 만든다.
+     */
+    private fun rebuildContent(p: Page) {
+        var bmp = contentCache
+        if (bmp == null || bmp.isRecycled || bmp.width != width || bmp.height != height) {
+            bmp?.recycle()
+            bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            contentCache = bmp
+        }
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        canvas.save()
+        canvas.translate(offsetX, offsetY)
+        canvas.scale(scale, scale)
+        canvas.clipRect(0f, 0f, p.worldWidth, p.worldHeight)
+        PagePainter.drawPage(canvas, p, backgroundBitmap, paint)
+        canvas.restore()
+        contentValid = true
+        contentW = width
+        contentH = height
+        contentScale = scale
+        contentOffsetX = offsetX
+        contentOffsetY = offsetY
+        contentRebuildCount++
+    }
+
+    /** 방금 마친 획 하나를 캐시 위에 바로 덧그린다(전체를 다시 긁지 않는다). */
+    private fun bakeElement(el: DrawElement) {
+        if (!contentValid) return
+        val bmp = contentCache ?: return
+        if (bmp.isRecycled) return
+        val p = page ?: return
+        val canvas = Canvas(bmp)
+        canvas.save()
+        canvas.translate(contentOffsetX, contentOffsetY)
+        canvas.scale(contentScale, contentScale)
+        canvas.clipRect(0f, 0f, p.worldWidth, p.worldHeight)
+        PagePainter.drawElement(canvas, el, paint)
+        canvas.restore()
+    }
+
+    /** 갖고 있던 캐시를 지금 확대·이동에 맞춰 늘려 그린다(확대·이동 중 전용). */
+    private fun drawStaleCache(canvas: Canvas) {
+        val bmp = contentCache ?: return
+        if (bmp.isRecycled || contentScale <= 0f) return
+        val s = scale / contentScale
+        canvas.save()
+        canvas.translate(offsetX - contentOffsetX * s, offsetY - contentOffsetY * s)
+        canvas.scale(s, s)
+        canvas.drawBitmap(bmp, 0f, 0f, null)
+        canvas.restore()
+    }
+
+    /**
+     * 지금 그리는 요소의 [fromIndex] 이후 점들이 영향을 주는 화면 영역만 다시 그리게 한다.
+     * 획이 길어져도 매 프레임 화면 전체를 다시 긁지 않도록, 지나간 구간만 무효화한다.
+     */
+    private fun invalidateLive(el: DrawElement, fromIndex: Int) {
+        val pts = el.points
+        if (pts.isEmpty()) return
+        val start = fromIndex.coerceIn(0, pts.size - 1)
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (i in start until pts.size) {
+            val pt = pts[i]
+            if (pt.x < minX) minX = pt.x
+            if (pt.y < minY) minY = pt.y
+            if (pt.x > maxX) maxX = pt.x
+            if (pt.y > maxY) maxY = pt.y
+        }
+        if (minX > maxX) return
+        val safeScale = scale.coerceAtLeast(0.0001f)
+        val pad = el.width / 2f + 6f / safeScale
+        val left = ((minX - pad) * scale + offsetX).toInt()
+        val top = ((minY - pad) * scale + offsetY).toInt()
+        val right = ((maxX + pad) * scale + offsetX).toInt() + 1
+        val bottom = ((maxY + pad) * scale + offsetY).toInt() + 1
+        liveInvalidateCount++
+        invalidate(left, top, right, bottom)
     }
 
     /** 포스트잇을 그리는 중의 점선 미리보기 사각형. */
@@ -387,7 +547,20 @@ class InkCanvasView @JvmOverloads constructor(
                 invalidate()
             }
 
-            MODE_DRAW -> extendCurrent(event)
+            MODE_DRAW -> {
+                val before = current
+                extendCurrent(event)
+                val el = current ?: return
+                if (el !== before) return // 획이 끊겨 새로 시작됨(splitStrokeAt 이 이미 전체를 다시 그리게 했다)
+                // 도형·덮개는 시작점부터 지금 점까지 모양이 계속 바뀌므로 전체를,
+                // 자유 곡선은 방금 지나간 구간만 다시 그린다.
+                val from = if (PagePainter.isShape(el.kind) || el.kind == ElementKind.COVER) {
+                    0
+                } else {
+                    (el.points.size - 5).coerceAtLeast(0)
+                }
+                invalidateLive(el, from)
+            }
 
             MODE_ERASE -> {
                 val index = activeIndex(event)
@@ -647,12 +820,15 @@ class InkCanvasView @JvmOverloads constructor(
             } catch (e: Exception) {
                 pressureOf(event, index)
             }
+            // 3.7: 배치로 들어온 점은 **그 점의 실제 시간**을 쓴다.
+            // 예전에는 모두 이 이벤트의 시간을 줘서 '한 샘플에 너무 멀리 튀었다'로 오해하고
+            // 멀쩡한 점을 버리는 일이 있었다(빠르게 그은 획이 끊겨 보이는 원인).
             addPointChecked(
                 el,
                 event.getHistoricalX(index, h),
                 event.getHistoricalY(index, h),
                 historicalPressure,
-                event.eventTime
+                event.getHistoricalEventTime(h)
             )
         }
         addPointChecked(
@@ -755,6 +931,8 @@ class InkCanvasView @JvmOverloads constructor(
         if (el.pressures.size != el.points.size) el.pressures.clear()
         p.pushUndo()
         p.elements.add(el)
+        // 완성한 획은 캐시 위에 바로 엎어 두고, 화면은 전체를 한 번만 다시 그린다.
+        bakeElement(el)
         invalidate()
         onPageEdited?.invoke()
     }
@@ -843,7 +1021,7 @@ class InkCanvasView @JvmOverloads constructor(
             erasePushed = true
         }
         p.elements.removeAll(list)
-        invalidate()
+        invalidateContent()
         onPageEdited?.invoke()
     }
 
@@ -944,7 +1122,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         p.elements.removeAll(removed)
         p.elements.addAll(added)
-        invalidate()
+        invalidateContent()
         onPageEdited?.invoke()
     }
 

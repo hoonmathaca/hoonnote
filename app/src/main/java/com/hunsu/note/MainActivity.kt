@@ -215,6 +215,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // 상단 제목의 버전은 빌드된 버전을 그대로 보여 준다(문자열을 따로 고치지 않게).
+        binding.tvTitle.text = getString(R.string.app_title, BuildConfig.VERSION_NAME)
         backgroundCache = PageBackgroundCache(File(cacheDir, "page-backgrounds"))
         // 노트 내용은 앱을 끄면 남지 않으므로, 지난 실행에서 남은 배경 캐시 파일을 비운다.
         backgroundCache.clear()
@@ -793,7 +795,7 @@ class MainActivity : AppCompatActivity() {
             page.style = style
             dirtyPages.add(page)
         }
-        binding.canvasView.invalidate()
+        binding.canvasView.invalidateContent()
         scheduleThumbRefresh(120)
     }
 
@@ -1024,7 +1026,7 @@ class MainActivity : AppCompatActivity() {
             page.applyContentLayout(Prefs.noteAlignEnum(), margin)
             dirtyPages.add(page)
         }
-        binding.canvasView.invalidate()
+        binding.canvasView.invalidateContent()
         scheduleThumbRefresh(120)
     }
 
@@ -1892,7 +1894,7 @@ class MainActivity : AppCompatActivity() {
                 text
             )
         )
-        binding.canvasView.invalidate()
+        binding.canvasView.invalidateContent()
         dirtyPages.add(page)
         updateUndoRedo()
         scheduleThumbRefresh(500)

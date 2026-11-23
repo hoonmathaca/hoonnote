@@ -40,6 +40,13 @@ class MainActivitySmokeTest {
     }
 
     @Test
+    fun `상단 제목에 빌드된 버전이 보인다`() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val title = activity.findViewById<android.widget.TextView>(R.id.tvTitle)
+        assertEquals("훈노트 " + BuildConfig.VERSION_NAME, title.text.toString())
+    }
+
+    @Test
     fun `형광펜과 지우개 두 종류를 눌러도 문제 없다`() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         activity.findViewById<android.view.View>(R.id.btnHighlighter).performClick()

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">훈노트</string>
-    <string name="app_title">훈노트 3.5</string>
+    <string name="app_title">훈노트 %1$s</string>
 
     <!-- 상단 메뉴 바 -->
     <string name="menu_lecture">강의</string>
